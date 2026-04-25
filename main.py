@@ -112,6 +112,11 @@ _CSP = (
 
 @app.middleware("http")
 async def request_middleware(request: Request, call_next):
+    # Bypass TrustedHostMiddleware for Railway's internal healthcheck.
+    # This decorator runs before TrustedHostMiddleware (last-added = outermost),
+    # so returning here means the Host header is never validated for /health.
+    if request.url.path == "/health":
+        return JSONResponse({"status": "ok"})
     start    = time.monotonic()
     response = await call_next(request)
     ms       = int((time.monotonic() - start) * 1000)
