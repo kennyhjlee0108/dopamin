@@ -3,10 +3,19 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.egg-info/
+dist/
+build/
 
-# Environment
+# Environment — NEVER commit secrets
 .env
-.env.*
+.env.local
+.env.production
+
+# Virtual env
+.venv/
+venv/
+env/
 
 # ChromaDB (unused leftover)
 dopamine_db/
@@ -14,6 +23,12 @@ dopamine_db/
 # User data (sensitive — never commit)
 user_data_*.json
 user_state.json_
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+/data/
 
 # OS
 .DS_Store

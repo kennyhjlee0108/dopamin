@@ -15,21 +15,32 @@
 
 <!-- ── Header ──────────────────────────────────────────────────── -->
 <header class="header">
-    <div class="logo">✦ intime</div>
+    <a href="/" class="logo" style="text-decoration:none">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="14" cy="14" r="14" fill="#162232"/>
+            <rect x="11.4" y="3.2" width="5.2" height="3.8" rx="0.7" fill="#76C8D8"/>
+            <rect x="4" y="9.8" width="10" height="3.8" rx="1" fill="#76C8D8"/>
+            <rect x="14" y="9.8" width="9.5" height="3.8" rx="1" fill="#76C8D8" transform="rotate(-38, 14, 11.7)"/>
+            <rect x="12" y="9.8" width="4" height="13.2" rx="1" fill="#76C8D8"/>
+        </svg>
+        <span class="logo-text">intime</span>
+    </a>
     <span class="header-date" id="header-date"></span>
     <div class="header-right">
-        <button class="icon-btn" onclick="openModal('dump-modal')" title="Brain dump — offload distracting thoughts">💭</button>
-        <button class="icon-btn" onclick="openCalendar()" title="Calendar">📅</button>
+        <div id="nav-session-badge" style="display:none" onclick="navBadgeClick()">
+            <span class="nsb-dot"></span>
+            <span class="nsb-label"></span>
+        </div>
+        <button class="icon-btn" onclick="gatedFeature('Brain Dump','💭') && openModal('dump-modal')" title="Brain dump">💭</button>
+        <button class="icon-btn" onclick="gatedCalendar()" title="Calendar">📅</button>
         <button class="icon-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle theme">🌙</button>
+        <div class="header-divider"></div>
         <div id="user-area">
-            <div id="g_id_onload"
-                 data-client_id="121246915230-hrfas5irqhnb8sgg8qoc37ba51dqkg0g.apps.googleusercontent.com"
-                 data-callback="handleCredentialResponse">
-            </div>
-            <div class="g_id_signin" data-type="standard" data-size="medium"></div>
+            <div id="google-signin-btn"></div>
             <div id="user-badge" style="display:none">
                 <span id="user-avatar"></span>
                 <span id="user-name"></span>
+                <button class="manage-sub-btn" id="manage-sub-btn" onclick="openBillingPortal()" title="Manage Pro subscription" style="display:none">⭐ Pro</button>
                 <button class="logout-btn" onclick="logOut()" title="Sign out">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
                 </button>
@@ -41,7 +52,7 @@
 <!-- ── App Grid ────────────────────────────────────────────────── -->
 <main class="app-grid">
 
-    <!-- Tasks Panel -->
+    <!-- ── Tasks Panel ─────────────────────────────────────────── -->
     <aside class="panel task-panel">
         <div class="panel-title">
             <span>Tasks</span>
@@ -51,35 +62,83 @@
             <input type="text" id="task-input" placeholder="Add a task…" autocomplete="off" maxlength="120">
             <button type="submit" class="task-add-btn" title="Add task">+</button>
         </form>
-        <div class="task-scroll">
-            <ul class="task-list" id="task-list"></ul>
-            <div class="done-section" id="done-section" style="display:none">
-                <button class="done-toggle" id="done-toggle" onclick="toggleDoneSection()">
-                    <span>Done</span>
-                    <span id="done-count" class="done-count-badge">0</span>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-                </button>
-                <ul class="task-list done-list" id="done-list"></ul>
+
+        <!-- Today's Time tracking -->
+        <div class="today-track" id="today-track">
+            <div class="today-track-hdr">TODAY'S TIME</div>
+            <div class="today-track-rows" id="today-track-rows"></div>
+            <div class="today-track-bar">
+                <div class="ttb-seg ttb-focus"  id="ttb-focus"  style="flex:0"></div>
+                <div class="ttb-seg ttb-break"  id="ttb-break"  style="flex:0"></div>
+                <div class="ttb-seg ttb-wasted" id="ttb-wasted" style="flex:0"></div>
+            </div>
+            <div class="today-track-total" id="today-track-total">No sessions yet today — start your first focus session above</div>
+        </div>
+
+        <!-- Lock-able task list area -->
+        <div class="lp-wrap">
+            <div class="lp-content" id="task-lp-content">
+                <!-- Demo tasks shown blurred for guests -->
+                <ul class="task-list task-demo" id="task-demo">
+                    <li class="task-item active-task">
+                        <div class="task-check"></div>
+                        <span class="task-title">Write chapter 3 summary</span>
+                        <span class="task-est">~20m</span>
+                    </li>
+                    <li class="task-item">
+                        <div class="task-check"></div>
+                        <span class="task-title">Review research notes</span>
+                        <span class="task-est">~15m</span>
+                    </li>
+                    <li class="task-item">
+                        <div class="task-check checked">✓</div>
+                        <span class="task-title done">Morning standup</span>
+                    </li>
+                    <li class="task-item">
+                        <div class="task-check"></div>
+                        <span class="task-title">Finish slides for tomorrow</span>
+                        <span class="task-est">~30m</span>
+                    </li>
+                </ul>
+                <!-- Real task list (hidden until signed in) -->
+                <div class="task-scroll" id="task-scroll-real" style="display:none">
+                    <ul class="task-list" id="task-list"></ul>
+                    <div class="done-section" id="done-section" style="display:none">
+                        <button class="done-toggle" id="done-toggle" onclick="toggleDoneSection()">
+                            <span>Done</span>
+                            <span id="done-count" class="done-count-badge">0</span>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                        </button>
+                        <ul class="task-list done-list" id="done-list"></ul>
+                    </div>
+                </div>
+            </div>
+            <!-- Guest lock overlay -->
+            <div class="lp-overlay visible" id="task-lp-overlay">
+                <div class="lock-card">
+                    <div class="lock-icon-badge">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6C63FF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                    </div>
+                    <h3 class="lock-heading">Unlock your task list</h3>
+                    <p class="lock-subtext">Sign in to organize your focus sessions and track what you accomplish.</p>
+                    <button class="lock-cta" id="task-lock-cta" data-allow-guest onclick="openModal('auth-modal')">Sign in to continue</button>
+                    <a class="lock-learn-more" href="/pricing" data-allow-guest>Learn more</a>
+                </div>
             </div>
         </div>
     </aside>
 
-    <!-- Focus Panel -->
+    <!-- ── Focus Panel (Timer) ──────────────────────────────────── -->
     <section class="panel focus-panel" id="focus-panel">
 
-        <!-- Top row: mode tabs + settings -->
         <div class="focus-top-row">
-            <div class="mode-tabs">
-                <button class="mode-tab active" data-mode="work"  onclick="switchMode('work')">Focus</button>
-                <button class="mode-tab"         data-mode="short" onclick="switchMode('short')">Short Break</button>
-                <button class="mode-tab"         data-mode="long"  onclick="switchMode('long')">Long Break</button>
+            <div class="mode-toggle">
+                <button class="mode-tog active" data-mode="focus"  onclick="setMode('focus')">Focus</button>
+                <button class="mode-tog"         data-mode="break"  onclick="setMode('break')">Break</button>
+                <button class="mode-tog"         data-mode="wasted" onclick="setMode('wasted')">Wasted</button>
             </div>
-            <button class="focus-icon-btn" onclick="openModal('settings-modal')" title="Timer settings">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-            </button>
         </div>
 
-        <!-- Timer Ring -->
         <div class="ring-wrap">
             <svg class="ring-svg" viewBox="0 0 220 220">
                 <circle class="ring-track" cx="110" cy="110" r="96"/>
@@ -91,32 +150,67 @@
             </div>
         </div>
 
-        <!-- Active Task -->
+        <div class="dp-pills" id="dp-pills"></div>
+
         <div class="active-task-row" id="active-task-row">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
             <span id="active-task-label">No task selected</span>
         </div>
 
-        <!-- Timer Controls -->
-        <div class="timer-controls">
-            <button class="timer-start-btn" id="timer-toggle" onclick="timerToggle()">Start</button>
-            <button class="timer-skip-btn"  id="timer-skip"   onclick="timerSkip()" title="Skip">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+        <div class="timer-icon-row">
+            <!-- Play / Pause -->
+            <button class="t-icon-btn" id="btn-play" onclick="handlePlay()" title="Start">
+                <svg class="icon-play" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                    <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
+                <svg class="icon-pause" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="display:none">
+                    <rect x="6" y="4" width="4" height="16" rx="1.5"/>
+                    <rect x="14" y="4" width="4" height="16" rx="1.5"/>
+                </svg>
+            </button>
+            <!-- Resume -->
+            <button class="t-icon-btn t-icon-dim" id="btn-resume" onclick="handleResume()" title="Resume">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                    <polygon points="4 5 16 12 4 19 4 5"/>
+                    <rect x="18" y="5" width="3" height="14" rx="1.5"/>
+                </svg>
+            </button>
+            <!-- Save session -->
+            <button class="t-icon-btn t-icon-dim" id="btn-save" onclick="handleSave()" title="Save session">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"/>
+                </svg>
             </button>
         </div>
 
-        <!-- Sound Controls -->
+        <!-- Sound Controls: rain+brown = free tier; white+lofi = Pro -->
         <div class="sound-controls">
-            <button class="sound-btn" id="snd-rain"  onclick="toggleSound('rain')"  title="Rain">🌧️</button>
-            <button class="sound-btn" id="snd-brown" onclick="toggleSound('brown')" title="Brown noise">☁️</button>
-            <button class="sound-btn" id="snd-white" onclick="toggleSound('white')" title="White noise">〰️</button>
-            <a class="sound-btn" href="https://lofi.cafe" target="_blank" rel="noopener" title="Lo-fi music ↗">🎵</a>
+            <span class="lock-badge-wrap">
+                <button class="sound-btn sound-gated" id="snd-rain" onclick="handleSoundClick('rain')" title="Rain">🌧️</button>
+                <span class="lock-badge-icon" id="snd-rain-badge">
+                    <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                </span>
+            </span>
+            <span class="lock-badge-wrap">
+                <button class="sound-btn sound-gated" id="snd-brown" onclick="handleSoundClick('brown')" title="Brown noise">☁️</button>
+                <span class="lock-badge-icon" id="snd-brown-badge">
+                    <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                </span>
+            </span>
+            <span class="lock-badge-wrap">
+                <button class="sound-btn sound-gated" id="snd-white" onclick="handleSoundClick('white')" title="White noise — Pro">〰️</button>
+                <span class="lock-badge-icon" id="snd-white-badge">
+                    <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                </span>
+            </span>
+            <span class="lock-badge-wrap">
+                <button class="sound-btn sound-gated" id="snd-lofi" onclick="handleSoundClick('lofi')" title="Lo-fi music — Pro">🎵</button>
+                <span class="lock-badge-icon" id="snd-lofi-badge">
+                    <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                </span>
+            </span>
         </div>
 
-        <!-- Session Dots -->
-        <div class="session-dots" id="session-dots"></div>
-
-        <!-- Stats -->
         <div class="focus-stats">
             <div class="focus-stat">
                 <span class="focus-stat-val" id="stat-sessions">0</span>
@@ -135,7 +229,7 @@
         </div>
     </section>
 
-    <!-- Chat Panel -->
+    <!-- ── Chat Panel (Study Friend) ───────────────────────────── -->
     <aside class="panel chat-panel">
         <div class="chat-header">
             <div class="chat-avatar">🧠</div>
@@ -144,19 +238,55 @@
                 <span class="chat-status" id="ai-status">Ready to help</span>
             </div>
         </div>
-        <div class="chat-messages" id="chat-messages">
-            <div class="signin-prompt" id="signin-prompt">
-                <div class="signin-icon">🧠</div>
-                <p>Sign in to chat with your<br><strong>Study Friend</strong></p>
-                <p class="signin-sub">Your ADHD-aware focus companion</p>
+
+        <!-- Lock-able chat body -->
+        <div class="lp-wrap">
+            <div class="lp-content" id="chat-lp-content">
+                <!-- Demo conversation shown blurred when locked -->
+                <div class="chat-demo" id="chat-demo">
+                    <div class="ai-bubble">
+                        <small class="bubble-sender">Study Friend</small>
+                        <div>Hey! 👋 I'm your Study Friend — here to help you focus. What are we working on today?</div>
+                    </div>
+                    <div class="user-bubble">
+                        <small class="bubble-sender">You</small>
+                        <div>I keep getting distracted from my essay...</div>
+                    </div>
+                    <div class="ai-bubble">
+                        <small class="bubble-sender">Study Friend</small>
+                        <div>That's completely normal. Let's break it down — <strong>what's the very first step</strong> you need to take right now?</div>
+                    </div>
+                    <div class="user-bubble">
+                        <small class="bubble-sender">You</small>
+                        <div>Open my notes, I think</div>
+                    </div>
+                    <div class="ai-bubble">
+                        <small class="bubble-sender">Study Friend</small>
+                        <div>Perfect. That's your only job right now — <strong>just open the notes</strong>. Set a 5-min timer and let's see what happens. 🎯</div>
+                    </div>
+                </div>
+                <!-- Real chat (shown for Pro users) -->
+                <div class="chat-messages" id="chat-messages" style="display:none"></div>
+                <div class="suggestions-row" id="suggestions"></div>
+                <div class="chat-input-wrap" id="chat-input-wrap">
+                    <textarea id="chat-input" placeholder="Talk to your Study Friend..." rows="1" disabled></textarea>
+                    <button id="send-btn" onclick="sendChat()" disabled>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    </button>
+                </div>
             </div>
-        </div>
-        <div class="suggestions-row" id="suggestions"></div>
-        <div class="chat-input-wrap" id="chat-input-wrap">
-            <textarea id="chat-input" placeholder="Talk to your Study Friend..." rows="1" disabled></textarea>
-            <button id="send-btn" onclick="sendChat()" disabled>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-            </button>
+            <!-- Lock overlay (updated content by JS per tier) -->
+            <div class="lp-overlay visible" id="chat-lp-overlay">
+                <div class="lock-card">
+                    <div class="lock-icon-badge">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6C63FF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                    </div>
+                    <h3 class="lock-heading" id="chat-lock-heading">Unlock your AI Study Friend</h3>
+                    <p class="lock-subtext" id="chat-lock-subtext">Sign in and upgrade to Pro for personalized focus coaching.</p>
+                    <button class="lock-cta" id="chat-lock-cta" data-allow-guest onclick="openModal('auth-modal')">Sign in to continue</button>
+                    <a class="lock-learn-more" href="/pricing" data-allow-guest id="chat-lock-learn">Learn more</a>
+                </div>
+            </div>
         </div>
     </aside>
 </main>
@@ -172,29 +302,22 @@
             <button class="modal-close" onclick="closeAllModals()">✕</button>
         </div>
         <div class="modal-body">
-            <div class="setting-row">
-                <label>Focus duration</label>
+            <div class="setting-row" id="sr-work">
+                <label>Focus duration <span class="pro-badge setting-pro-badge">PRO</span></label>
                 <div class="setting-input-row">
-                    <input type="number" id="s-work"  min="1" max="120" value="25">
+                    <input type="number" id="s-work" min="1" max="180" value="25" disabled>
                     <span>min</span>
                 </div>
             </div>
-            <div class="setting-row">
-                <label>Short break</label>
+            <div class="setting-row" id="sr-short">
+                <label>Break duration <span class="pro-badge setting-pro-badge">PRO</span></label>
                 <div class="setting-input-row">
-                    <input type="number" id="s-short" min="1" max="30"  value="5">
-                    <span>min</span>
-                </div>
-            </div>
-            <div class="setting-row">
-                <label>Long break</label>
-                <div class="setting-input-row">
-                    <input type="number" id="s-long"  min="1" max="60"  value="15">
+                    <input type="number" id="s-short" min="1" max="60" value="5" disabled>
                     <span>min</span>
                 </div>
             </div>
         </div>
-        <button class="modal-cta" onclick="applySettings()">Save Changes</button>
+        <button class="modal-cta" id="settings-save-btn" onclick="applySettings()">Upgrade to customize →</button>
     </div>
 </div>
 
@@ -269,6 +392,134 @@
                 </div>
             </div>
         </div>
+    </div>
+</div>
+
+<!-- Upgrade Modal v2 — two-column pricing cards -->
+<div class="modal upgrade-modal-v2" id="upgrade-modal">
+    <div class="modal-box">
+        <div class="modal-header" style="margin-bottom:-4px">
+            <div style="flex:1"></div>
+            <button class="modal-close" onclick="closeAllModals()">✕</button>
+        </div>
+        <div class="upgrade-v2-header">
+            <h2 class="upgrade-v2-title">Choose your plan</h2>
+            <p class="upgrade-v2-sub">Start free, upgrade anytime</p>
+        </div>
+        <div class="pricing-cards">
+            <!-- Free card -->
+            <div class="pricing-card">
+                <div>
+                    <div class="pricing-card-price">$0</div>
+                    <div class="pricing-card-period">forever · no credit card</div>
+                </div>
+                <div class="pricing-card-features">
+                    <div class="pf-item"><span class="pf-check">✓</span>Pomodoro timer (all 3 modes)</div>
+                    <div class="pf-item"><span class="pf-check">✓</span>Basic task list</div>
+                    <div class="pf-item"><span class="pf-check">✓</span>2 ambient sounds</div>
+                    <div class="pf-item"><span class="pf-check">✓</span>Session dots &amp; basic stats</div>
+                    <div class="pf-item"><span class="pf-check">✓</span>Brain dump &amp; task breakdown</div>
+                </div>
+                <button class="pricing-card-btn pricing-card-btn-free" onclick="closeAllModals()">Start for Free →</button>
+            </div>
+            <!-- Pro card -->
+            <div class="pricing-card pricing-card-pro">
+                <div class="pricing-card-badge">MOST POPULAR</div>
+                <div>
+                    <div class="pricing-card-price">$9</div>
+                    <div class="pricing-card-period">per month · cancel anytime</div>
+                </div>
+                <div class="pricing-card-features">
+                    <div class="pf-item"><span class="pf-check">✓</span>Everything in Free</div>
+                    <div class="pf-item"><span class="pf-check">✓</span>AI Study Friend (unlimited)</div>
+                    <div class="pf-item"><span class="pf-check">✓</span>All ambient sounds + lo-fi</div>
+                    <div class="pf-item"><span class="pf-check">✓</span>Google Calendar sync</div>
+                    <div class="pf-item"><span class="pf-check">✓</span>Full stats &amp; streaks history</div>
+                    <div class="pf-item"><span class="pf-check">✓</span>Custom timer durations</div>
+                </div>
+                <button class="pricing-card-btn pricing-card-btn-pro" onclick="closeAllModals(); startCheckout()">Get Pro — $9/mo ✦</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Auth Modal (guest gate) -->
+<div class="modal" id="auth-modal">
+    <div class="modal-box auth-box">
+        <div class="modal-header" style="justify-content:flex-end;margin-bottom:-8px">
+            <button class="modal-close" data-allow-guest onclick="closeAllModals()">✕</button>
+        </div>
+        <div class="auth-lock">🔐</div>
+        <h3 class="auth-title">Sign in to use intime</h3>
+        <p class="auth-sub">Free account — takes 5 seconds</p>
+        <button class="auth-google-btn" data-allow-guest onclick="triggerGoogleSignIn()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="flex-shrink:0"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+            Continue with Google
+        </button>
+        <a class="auth-learn-more" href="/pricing" data-allow-guest>Learn about Pro plans →</a>
+    </div>
+</div>
+
+<!-- Session End Popup -->
+<div class="modal sep-modal" id="session-end-modal">
+    <div class="modal-box sep-box">
+        <!-- Step A: What's next? -->
+        <div id="sep-step-a">
+            <div class="sep-emoji" id="sep-emoji">🎯</div>
+            <h3 class="sep-title" id="sep-title">Focus session complete</h3>
+            <p class="sep-sub" id="sep-sub">What's next?</p>
+            <div class="sep-choices" id="sep-choices"></div>
+            <p class="sep-countdown" id="sep-countdown"></p>
+        </div>
+        <!-- Step B: Duration pick -->
+        <div id="sep-step-b" style="display:none">
+            <h3 class="sep-title" id="sep-title-b">How long will you focus?</h3>
+            <div class="sep-dur-display" id="sep-dur-display">25m</div>
+            <div class="sep-quick-picks" id="sep-quick-picks"></div>
+            <button class="sep-start-btn" onclick="startNextSession()">Start</button>
+            <button class="sep-cancel" onclick="cancelSessionPopup()">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- Wheel Picker Overlay + Modal -->
+<div class="wp-overlay" id="wp-overlay" style="display:none" onclick="closeWheelPicker()"></div>
+<div class="modal wp-modal" id="wheel-picker-modal">
+    <div class="modal-box wp-box">
+        <div class="wp-header">
+            <div>
+                <div class="wp-title">Set duration</div>
+                <div class="wp-subtitle" id="wp-subtitle">Focus</div>
+            </div>
+            <button class="modal-close" onclick="closeWheelPicker()">✕</button>
+        </div>
+        <div class="wp-wheels-row">
+            <div class="wp-wheel-col">
+                <div class="wp-label">HR</div>
+                <div class="wp-wheel-container" id="wp-h"></div>
+            </div>
+            <div class="wp-wheel-col">
+                <div class="wp-label">MIN</div>
+                <div class="wp-wheel-container" id="wp-m"></div>
+            </div>
+            <div class="wp-wheel-col">
+                <div class="wp-label">SEC</div>
+                <div class="wp-wheel-container" id="wp-s"></div>
+            </div>
+        </div>
+        <div class="wp-footer">
+            <button class="wp-cancel-btn" onclick="closeWheelPicker()">Cancel</button>
+            <button class="wp-confirm-btn" id="wp-confirm-btn" onclick="confirmWheelPicker()">Set duration</button>
+        </div>
+    </div>
+</div>
+
+<!-- Toast notification -->
+<div class="toast" id="toast">
+    <span class="toast-icon">✨</span>
+    <div class="toast-content">
+        <span class="toast-message"></span>
+        <span class="toast-sub" style="display:none"></span>
     </div>
 </div>
 

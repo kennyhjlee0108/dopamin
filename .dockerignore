@@ -1,0 +1,15 @@
+__pycache__
+node_modules
+*.pyc
+*.pyo
+.env
+.env.*
+.venv/
+venv/
+.git/
+.DS_Store
+*.db
+*.sqlite
+/data/
+dopamine_db/
+user_data_*.json

@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS focus_sessions (
 CREATE INDEX IF NOT EXISTS idx_focus_sessions_user_date
     ON focus_sessions (user_id, created_at);
 
--- NEW: track completed tasks + actual time spent (for personalized estimates)
+-- Track completed tasks + actual time spent (for personalized estimates)
 CREATE TABLE IF NOT EXISTS task_completions (
     id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id       TEXT NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS task_completions (
 CREATE INDEX IF NOT EXISTS idx_task_completions_user_date
     ON task_completions (user_id, completed_at);
 
--- NEW: calendar notes per user per date
+-- Calendar notes per user per date
 CREATE TABLE IF NOT EXISTS calendar_notes (
     id         UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id    TEXT NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
@@ -41,3 +41,23 @@ CREATE TABLE IF NOT EXISTS calendar_notes (
 
 CREATE INDEX IF NOT EXISTS idx_calendar_notes_user
     ON calendar_notes (user_id, date);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- MIGRATIONS: run these after the initial setup if the table already exists
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Pro / subscription columns
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS is_pro BOOLEAN DEFAULT FALSE;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS subscription_status TEXT DEFAULT 'free';
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS subscription_current_period_end BIGINT;
+
+-- Custom timer durations (Pro feature)
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS timer_work  INTEGER;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS timer_short INTEGER;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS timer_long  INTEGER;
+
+-- Index for Stripe customer lookups
+CREATE INDEX IF NOT EXISTS idx_user_profiles_stripe_customer
+    ON user_profiles (stripe_customer_id);

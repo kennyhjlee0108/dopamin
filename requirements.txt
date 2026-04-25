@@ -1,6 +1,9 @@
 fastapi
 uvicorn[standard]
 google-genai
+google-auth
+itsdangerous
 python-dotenv
 supabase
 python-multipart
+stripe

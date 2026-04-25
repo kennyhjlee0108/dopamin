@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>intime — Pricing</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --primary: #6366F1;
+            --primary-deep: #4F46E5;
+            --primary-dim: #EEF2FF;
+            --text: #0F172A;
+            --text-muted: #64748B;
+            --border: #E4E7EF;
+            --bg: #F8F8FF;
+            --panel: #FFFFFF;
+            --success: #10B981;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        /* ── Nav ── */
+        .nav {
+            height: 64px;
+            background: white;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 32px;
+        }
+        .nav-logo {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            text-decoration: none;
+            font-weight: 800;
+            font-size: 1.1rem;
+            color: var(--primary);
+        }
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+        .nav-links a {
+            text-decoration: none;
+            font-size: 0.87rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            transition: color 0.15s;
+        }
+        .nav-links a:hover { color: var(--text); }
+        .nav-cta {
+            padding: 8px 20px;
+            border-radius: 10px;
+            background: var(--primary);
+            color: white;
+            font-weight: 700;
+            font-size: 0.87rem;
+            text-decoration: none;
+            transition: opacity 0.15s;
+        }
+        .nav-cta:hover { opacity: 0.88; }
+
+        /* ── Hero ── */
+        .pricing-hero {
+            text-align: center;
+            padding: 72px 24px 48px;
+            background: linear-gradient(160deg, #F0F1FF, #F5F0FF);
+            border-bottom: 1px solid var(--border);
+        }
+        .pricing-label {
+            font-size: 0.72rem;
+            font-weight: 800;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--primary);
+            margin-bottom: 12px;
+        }
+        .pricing-hero h1 {
+            font-size: 2.6rem;
+            font-weight: 900;
+            letter-spacing: -1.5px;
+            color: var(--text);
+            margin-bottom: 14px;
+        }
+        .pricing-hero p {
+            font-size: 1rem;
+            color: var(--text-muted);
+            max-width: 440px;
+            margin: 0 auto;
+            line-height: 1.65;
+        }
+
+        /* ── Cards ── */
+        .pricing-section {
+            max-width: 820px;
+            margin: 0 auto;
+            padding: 64px 24px;
+        }
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .pricing-card {
+            background: white;
+            border: 1.5px solid var(--border);
+            border-radius: 24px;
+            padding: 36px 30px;
+            position: relative;
+        }
+        .pricing-card.pro {
+            background: linear-gradient(150deg, #4F46E5 0%, #7C3AED 100%);
+            border-color: transparent;
+            box-shadow: 0 24px 60px rgba(99,102,241,0.35);
+            color: white;
+        }
+        .popular-badge {
+            position: absolute;
+            top: -13px; right: 24px;
+            background: #F59E0B;
+            color: white;
+            font-size: 0.68rem;
+            font-weight: 800;
+            padding: 4px 13px;
+            border-radius: 99px;
+            letter-spacing: 0.4px;
+            text-transform: uppercase;
+        }
+        .card-tier {
+            font-size: 0.68rem;
+            font-weight: 800;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+        }
+        .pricing-card.pro .card-tier { color: rgba(255,255,255,0.6); }
+        .card-price {
+            font-size: 3rem;
+            font-weight: 900;
+            letter-spacing: -2px;
+            color: var(--text);
+            line-height: 1;
+            margin-bottom: 4px;
+        }
+        .pricing-card.pro .card-price { color: white; }
+        .card-period {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-bottom: 28px;
+        }
+        .pricing-card.pro .card-period { color: rgba(255,255,255,0.6); }
+        .card-divider {
+            height: 1px;
+            background: var(--border);
+            margin-bottom: 24px;
+        }
+        .pricing-card.pro .card-divider { background: rgba(255,255,255,0.15); }
+        .card-features {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 32px;
+        }
+        .card-features li {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            font-size: 0.88rem;
+            color: var(--text);
+            line-height: 1.4;
+        }
+        .pricing-card.pro .card-features li { color: rgba(255,255,255,0.9); }
+        .feat-check {
+            width: 20px; height: 20px;
+            border-radius: 50%;
+            background: rgba(16,185,129,0.1);
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0;
+            margin-top: 0px;
+        }
+        .feat-check svg { color: var(--success); }
+        .pricing-card.pro .feat-check {
+            background: rgba(255,255,255,0.18);
+        }
+        .pricing-card.pro .feat-check svg { color: white; }
+        .card-cta {
+            display: block;
+            width: 100%;
+            padding: 14px;
+            border-radius: 14px;
+            text-align: center;
+            font-weight: 700;
+            font-size: 0.93rem;
+            text-decoration: none;
+            cursor: pointer;
+            font-family: inherit;
+            border: none;
+            transition: opacity 0.15s, transform 0.1s, box-shadow 0.1s;
+        }
+        .cta-free {
+            background: var(--primary-dim);
+            color: var(--primary);
+            border: 1.5px solid rgba(99,102,241,0.2);
+        }
+        .cta-free:hover { opacity: 0.8; }
+        .cta-pro {
+            background: white;
+            color: var(--primary-deep);
+            box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+        }
+        .cta-pro:hover { transform: translateY(-1px); box-shadow: 0 6px 22px rgba(0,0,0,0.16); }
+        .cta-pro:disabled {
+            opacity: 0.6;
+            cursor: default;
+            transform: none;
+        }
+
+        .guarantee {
+            text-align: center;
+            margin-top: 24px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        /* ── FAQ ── */
+        .faq-section {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 0 24px 80px;
+        }
+        .faq-title {
+            font-size: 1.4rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            color: var(--text);
+            margin-bottom: 28px;
+            text-align: center;
+        }
+        .faq-item {
+            border-bottom: 1px solid var(--border);
+            padding: 18px 0;
+        }
+        .faq-q {
+            font-size: 0.92rem;
+            font-weight: 700;
+            color: var(--text);
+            margin-bottom: 8px;
+        }
+        .faq-a {
+            font-size: 0.87rem;
+            color: var(--text-muted);
+            line-height: 1.65;
+        }
+
+        /* ── Toast ── */
+        .toast {
+            position: fixed;
+            bottom: 28px;
+            left: 50%;
+            transform: translateX(-50%) translateY(20px);
+            background: var(--text);
+            color: white;
+            padding: 12px 22px;
+            border-radius: 12px;
+            font-size: 0.87rem;
+            font-weight: 600;
+            opacity: 0;
+            transition: opacity 0.25s, transform 0.25s;
+            pointer-events: none;
+            z-index: 999;
+        }
+        .toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        @media (max-width: 640px) {
+            .pricing-grid { grid-template-columns: 1fr; }
+            .pricing-hero h1 { font-size: 2rem; }
+        }
+    </style>
+</head>
+<body>
+
+<nav class="nav">
+    <a href="/" class="nav-logo">
+        <svg width="26" height="26" viewBox="0 0 28 28" fill="none">
+            <circle cx="14" cy="14" r="14" fill="#162232"/>
+            <rect x="11.4" y="3.2" width="5.2" height="3.8" rx="0.7" fill="#76C8D8"/>
+            <rect x="4" y="9.8" width="10" height="3.8" rx="1" fill="#76C8D8"/>
+            <rect x="14" y="9.8" width="9.5" height="3.8" rx="1" fill="#76C8D8" transform="rotate(-38, 14, 11.7)"/>
+            <rect x="12" y="9.8" width="4" height="13.2" rx="1" fill="#76C8D8"/>
+        </svg>
+        intime
+    </a>
+    <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/app">App</a>
+    </div>
+    <a href="/app" class="nav-cta">Open App →</a>
+</nav>
+
+<div class="pricing-hero">
+    <p class="pricing-label">Pricing</p>
+    <h1>Simple, honest pricing</h1>
+    <p>Start free, no credit card needed. Upgrade to Pro when you're ready for the full experience.</p>
+</div>
+
+<div class="pricing-section">
+    <div class="pricing-grid">
+        <!-- Free -->
+        <div class="pricing-card">
+            <p class="card-tier">Free</p>
+            <div class="card-price">$0</div>
+            <p class="card-period">forever · no card needed</p>
+            <div class="card-divider"></div>
+            <ul class="card-features">
+                <li>
+                    <span class="feat-check"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>
+                    Pomodoro timer — Focus, Short &amp; Long Break
+                </li>
+                <li>
+                    <span class="feat-check"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>
+                    Basic task list (add &amp; delete tasks)
+                </li>
+                <li>
+                    <span class="feat-check"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>
+                    2 ambient sounds — Rain &amp; Brown noise
+                </li>
+                <li>
+                    <span class="feat-check"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>
+                    Session tracking &amp; basic stats
+                </li>
+                <li>
+                    <span class="feat-check"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>
+                    Brain dump (capture distracting thoughts)
+                </li>
+                <li>
+                    <span class="feat-check"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>
+                    Energy check-in before sessions
+                </li>
+            </ul>
+            <a href="/app" class="card-cta cta-free">Get Started Free →</a>
+        </div>
+
+        <!-- Pro -->
+        <div class="pricing-card pro">
+            <div class="popular-badge">Most Popular</div>
+            <p class="card-tier">Pro</p>
+            <div class="card-price">$9</div>
+            <p class="card-period">per month · cancel anytime</p>
+            <div class="card-divider"></div>
+            <ul class="card-features">
+                <li>
+                    <span class="feat-check"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>
+                    Everything in Free
+                </li>
+                <li>
+                    <span class="feat-check"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>
+                    AI Study Friend — unlimited chat
+                </li>
+                <li>
+                    <span class="feat-check"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>
+                    All ambient sounds including lo-fi music
+                </li>
+                <li>
+                    <span class="feat-check"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>
+                    Google Calendar sync &amp; notes
+                </li>
+                <li>
+                    <span class="feat-check"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>
+                    Full stats &amp; streaks history
+                </li>
+                <li>
+                    <span class="feat-check"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>
+                    Custom timer durations
+                </li>
+                <li>
+                    <span class="feat-check"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>
+                    AI task time estimates
+                </li>
+                <li>
+                    <span class="feat-check"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>
+                    Priority support
+                </li>
+            </ul>
+            <button class="card-cta cta-pro" id="checkout-btn" onclick="startCheckout()">
+                Get Pro — $9/mo ✦
+            </button>
+        </div>
+    </div>
+
+    <p class="guarantee">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        30-day money-back guarantee · Secure checkout via Stripe · Cancel anytime
+    </p>
+</div>
+
+<!-- FAQ -->
+<div class="faq-section">
+    <h2 class="faq-title">Frequently asked questions</h2>
+    <div class="faq-item">
+        <p class="faq-q">Do I need a credit card to start?</p>
+        <p class="faq-a">No. The Free tier is completely free with no credit card required. You only need to pay when you upgrade to Pro.</p>
+    </div>
+    <div class="faq-item">
+        <p class="faq-q">Can I cancel anytime?</p>
+        <p class="faq-a">Yes — you can cancel your Pro subscription at any time from your account settings. You keep Pro access until the end of your billing period.</p>
+    </div>
+    <div class="faq-item">
+        <p class="faq-q">Is this really built for ADHD?</p>
+        <p class="faq-a">Yes. The AI Study Friend's coaching style, the short-session focus philosophy, task breakdown, and energy check-ins are all designed around ADHD research and the challenges that come with ADHD executive function.</p>
+    </div>
+    <div class="faq-item">
+        <p class="faq-q">What is the AI Study Friend?</p>
+        <p class="faq-a">It's an ADHD-aware AI companion inside the app. It knows your task list, your current timer state, and your energy level — and gives you personalised nudges, task breakdowns, and celebration when you finish a session.</p>
+    </div>
+    <div class="faq-item">
+        <p class="faq-q">What payment methods do you accept?</p>
+        <p class="faq-a">We accept all major credit and debit cards via Stripe. Your payment is processed securely and we never store your card details.</p>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+async function startCheckout() {
+    const btn = document.getElementById('checkout-btn');
+    const userId = localStorage.getItem('intime_last_user_id');
+
+    if (!userId) {
+        showToast('Please sign in first — open the app and sign in with Google.');
+        setTimeout(() => { window.location.href = '/app'; }, 2000);
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Loading…';
+
+    try {
+        const res = await fetch('/create-checkout-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId }),
+        });
+        const data = await res.json();
+
+        if (data.checkout_url) {
+            window.location.href = data.checkout_url;
+        } else if (data.error) {
+            showToast('Stripe not configured yet. Add your Stripe keys to .env to enable payments.');
+            btn.disabled = false;
+            btn.textContent = 'Get Pro — $9/mo ✦';
+        }
+    } catch {
+        showToast('Something went wrong — please try again.');
+        btn.disabled = false;
+        btn.textContent = 'Get Pro — $9/mo ✦';
+    }
+}
+
+function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 4000);
+}
+
+// Check for payment success redirect from Stripe
+const params = new URLSearchParams(window.location.search);
+if (params.get('payment') === 'success') {
+    showToast('🎉 Welcome to intime Pro! Your account has been upgraded.');
+}
+</script>
+</body>
+</html>

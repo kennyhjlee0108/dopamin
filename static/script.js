@@ -6,55 +6,193 @@ let settings = loadSettings();
 function loadSettings() {
     try {
         const s = JSON.parse(localStorage.getItem('intime_settings') || '{}');
-        return { work: s.work || 25, short: s.short || 5, long: s.long || 15 };
-    } catch { return { work: 25, short: 5, long: 15 }; }
+        return {
+            focus: s.focus || s.work  || 25,
+            break: s.break || s.short || 5,
+        };
+    } catch { return { focus: 25, break: 5 }; }
 }
 
-let MODES = buildModes(settings);
-const RING_C = 2 * Math.PI * 96; // ≈ 603
-
-function buildModes(s) {
-    return {
-        work:  { seconds: s.work  * 60, label: 'FOCUS' },
-        short: { seconds: s.short * 60, label: 'SHORT BREAK' },
-        long:  { seconds: s.long  * 60, label: 'LONG BREAK' },
-    };
-}
-
+const RING_C = 2 * Math.PI * 96;
 const STREAK_MILESTONES = new Set([3, 7, 14, 21, 30, 60, 100]);
+const FOCUS_PICKS = [15 * 60, 25 * 60, 45 * 60, 60 * 60];
+const BREAK_PICKS = [5 * 60, 10 * 60, 15 * 60];
 
 // =============================================
-// State
+// App State (state machine)
+// idle | focus_running | focus_paused | break_running | break_paused | awaiting_response | wasted
 // =============================================
-let user = { id: null, name: 'Friend', streak: 0, isReturning: false, energyLevel: null };
+let appState         = 'idle';
+let timerMode        = 'focus';       // 'focus' | 'break'
+let timerTotalSecs   = settings.focus * 60;
+let timerRemainSecs  = settings.focus * 60;
+let timerElapsedSecs = 0;             // seconds accumulated across pauses
+let timerStartedAt   = null;          // Date.now() at last start/resume
+let timerInterval    = null;
+
+// Wasted state
+let wastedStartedAt = null;
+let wastedInterval  = null;
+
+// Popup (awaiting_response) state
+let popupDeadline   = null;           // Date.now() + 300 000
+let popupInterval   = null;
+let nextSessionMode = null;           // 'focus' | 'break'
+let sepNextSecs     = 25 * 60;        // duration selected in step B
+
+// Wheel Picker state
+let _wpCallback = null;
+let _wpWheels   = {};                 // { h, m, s } => { getValue, setValue }
+
+// User
+let user = { id: null, name: 'Friend', streak: 0, isReturning: false, energyLevel: null, isPro: false };
 let tasks = loadTasks();
-let activeTaskId = null;
-let doneSectionOpen = false;
+let activeTaskId      = null;
+let doneSectionOpen   = false;
 let pendingTimerStart = false;
 
-let timer = {
-    mode:          'work',
-    remaining:     MODES.work.seconds,
-    total:         MODES.work.seconds,
-    running:       false,
-    interval:      null,
-    cycleCount:    0,
-    sessionsToday: loadTodaySessions(),
-    minutesToday:  0,
-};
+// Stats (header display)
+let sessionsToday = loadTodaySessions();
+let minutesToday  = 0;
+
+// Detailed daily tracking (seconds per category)
+let todayTracking = loadTodayTracking();
 
 let chatHistory = [];
+
+// Google Sign-In readiness flags (must be declared before restoreSession IIFE below)
+let _gsiReady   = false;
+let _gsiPending = false;
 
 // =============================================
 // Init
 // =============================================
 applyTheme();
 renderTasks();
-renderSessionDots();
 updateTimerDisplay();
+updateRing();
 updateStatsDisplay();
 loadSettingsUI();
 setHeaderDate();
+updateLockedUI();
+renderTodayTracking();
+updateIcons();
+updateQuickPicks();
+updateNavSessionBadge();
+updateModeTabDots();
+updateWastedTabLabel();
+
+// Restore session from cookie if one already exists (e.g. page reload, post-Stripe redirect)
+(async function restoreSession() {
+    const hasSessionHint = !!localStorage.getItem('intime_has_session');
+    // No hint → first-time visitor or logged-out user; show button right away.
+    if (!hasSessionHint) _initGoogleSignIn();
+    try {
+        const res = await fetch('/auth/me', { credentials: 'include' });
+        if (!res.ok) {
+            // Had a hint but the cookie is gone/expired.
+            if (hasSessionHint) {
+                localStorage.removeItem('intime_has_session');
+                _initGoogleSignIn();
+            }
+            return;
+        }
+        const { user_id } = await res.json();
+        // Valid session — keep the sign-in button hidden.
+        localStorage.setItem('intime_has_session', '1');
+        // Restore display name from localStorage while profile loads
+        user.name = localStorage.getItem('intime_last_user_name') || 'Friend';
+        user.id   = user_id;
+        document.getElementById('user-avatar').textContent = user.name[0].toUpperCase();
+        document.getElementById('user-name').textContent   = user.name;
+        document.getElementById('user-badge').style.display = 'flex';
+        document.getElementById('google-signin-btn').style.display = 'none';
+        updateLockedUI();
+        renderTasks();
+        // Full profile fetch
+        try {
+            const pr   = await fetch('/get-profile', { credentials: 'include' });
+            const data = await pr.json();
+            minutesToday  = data.today_minutes  || 0;
+            sessionsToday = data.today_sessions || sessionsToday;
+            user.streak      = data.streak      || 0;
+            user.isReturning = data.is_returning || false;
+            user.isPro       = data.is_pro       || false;
+            if (user.isPro && data.timer_work) {
+                settings = { focus: data.timer_work || settings.focus, break: data.timer_short || settings.break };
+                localStorage.setItem('intime_settings', JSON.stringify(settings));
+                loadSettingsUI();
+                if (appState === 'idle') {
+                    timerTotalSecs  = settings[timerMode] * 60;
+                    timerRemainSecs = timerTotalSecs;
+                    updateTimerDisplay(); updateRing(); updateQuickPicks();
+                }
+            }
+            enableChat();
+            updateLockedUI();
+            updateStatsDisplay();
+            tasks = loadTasks();
+            renderTasks();
+            await _loadChatHistory();
+        } catch (e) { console.error('Profile restore failed:', e); }
+        await _restoreTimerState();
+    } catch {}
+})();
+
+// Guest timer restore — runs immediately without waiting for auth
+(function () {
+    if (localStorage.getItem('intime_has_session')) return; // logged-in user handled above
+    try {
+        const state = JSON.parse(localStorage.getItem('intime_timer_state') || 'null');
+        if (state) _applyTimerState(state);
+    } catch {}
+})();
+
+// Check post-checkout URL params on every page load
+(function handleCheckoutReturn() {
+    const params = new URLSearchParams(window.location.search);
+
+    if (params.get('checkout') === 'canceled') {
+        window.history.replaceState({}, '', '/app');
+        showToast('Checkout canceled — no charge made', 'ℹ️');
+        return;
+    }
+
+    if (params.get('upgraded') !== 'true') return;
+    window.history.replaceState({}, '', '/app');
+
+    const savedUid  = sessionStorage.getItem('intime_post_checkout_uid');
+    const savedName = sessionStorage.getItem('intime_post_checkout_name');
+    sessionStorage.removeItem('intime_post_checkout_uid');
+    sessionStorage.removeItem('intime_post_checkout_name');
+
+    if (!savedUid) {
+        sessionStorage.setItem('intime_upgraded_pending', '1');
+        return;
+    }
+
+    user.id   = savedUid;
+    user.name = savedName || localStorage.getItem('intime_last_user_name') || 'Friend';
+
+    let polls = 0;
+    const checkPro = async () => {
+        polls++;
+        try {
+            const res  = await fetch('/api/user/subscription', { credentials: 'include' });
+            const data = await res.json();
+            if (data.is_pro) {
+                user.isPro = true;
+                updateLockedUI();
+                updateStatsDisplay();
+                showToast('Pro activated! Sign in to access all features ✨', '✨', 6000);
+                return;
+            }
+        } catch (e) { console.error('Post-checkout Pro check failed:', e); }
+        if (polls < 15) setTimeout(checkPro, 1000);
+        else showToast('Payment received — sign in to activate Pro ✨', '✨', 6000);
+    };
+    checkPro();
+})();
 
 // =============================================
 // Theme
@@ -81,34 +219,327 @@ function toggleTheme() {
 }
 
 // =============================================
+// Auth Gate
+// =============================================
+function showSignInBanner() { openModal('auth-modal'); }
+function hideSignInBanner() { closeAllModals(); }
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeAllModals();
+});
+
+document.addEventListener('click', function(e) {
+    if (user.id) return;
+    if (e.target.closest('#theme-btn, #user-area, #auth-modal, .logo, [data-allow-guest], #focus-panel')) return;
+    openModal('auth-modal');
+    e.preventDefault();
+    e.stopPropagation();
+}, true);
+
+// =============================================
+// Feature Gating
+// =============================================
+function gatedFeature() {
+    if (!user.id)    { openModal('auth-modal');    return false; }
+    if (!user.isPro) { openModal('upgrade-modal'); return false; }
+    return true;
+}
+
+function showUpgradeModal() { openModal('upgrade-modal'); }
+
+function triggerGoogleSignIn() {
+    closeAllModals();
+    hideSignInBanner();
+    if (typeof google !== 'undefined') google.accounts.id.prompt();
+}
+
+function gatedLofi() {
+    if (!gatedFeature()) return;
+    window.open('https://lofi.cafe', '_blank', 'noopener');
+}
+
+function gatedCalendar() {
+    if (!gatedFeature()) return;
+    openCalendar();
+}
+
+function gatedSettings() {
+    if (!user.id) { openModal('auth-modal'); return; }
+    openModal('settings-modal');
+}
+
+function gatedChat() {
+    if (!user.id) { openModal('auth-modal'); return; }
+    openModal('upgrade-modal');
+}
+
+// =============================================
+// Locked UI
+// =============================================
+function updateLockedUI() {
+    const isGuest = !user.id;
+    const isFree  = user.id && !user.isPro;
+
+    const taskOverlay = document.getElementById('task-lp-overlay');
+    if (taskOverlay) taskOverlay.classList.toggle('visible', isGuest);
+
+    const taskDemo = document.getElementById('task-demo');
+    const taskReal = document.getElementById('task-scroll-real');
+    if (taskDemo) taskDemo.style.display = isGuest ? '' : 'none';
+    if (taskReal) taskReal.style.display = isGuest ? 'none' : '';
+
+    const chatOverlay = document.getElementById('chat-lp-overlay');
+    if (chatOverlay) {
+        chatOverlay.classList.toggle('visible', isGuest || isFree);
+        const heading = document.getElementById('chat-lock-heading');
+        const subtext = document.getElementById('chat-lock-subtext');
+        const cta     = document.getElementById('chat-lock-cta');
+        if (isGuest) {
+            if (heading) heading.textContent = 'Unlock your AI Study Friend';
+            if (subtext) subtext.textContent = 'Sign in and upgrade to Pro for personalized focus coaching.';
+            if (cta) { cta.textContent = 'Sign in to continue'; cta.onclick = () => openModal('auth-modal'); }
+        } else if (isFree) {
+            if (heading) heading.textContent = 'Upgrade to unlock AI coaching';
+            if (subtext) subtext.textContent = 'Get unlimited chat with your Study Friend, personalized support, and session insights.';
+            if (cta) { cta.textContent = 'Upgrade to Pro — $9/mo'; cta.onclick = () => openModal('upgrade-modal'); }
+        }
+    }
+
+    const chatDemo     = document.getElementById('chat-demo');
+    const chatMessages = document.getElementById('chat-messages');
+    if (chatDemo)     chatDemo.style.display     = (isGuest || isFree) ? '' : 'none';
+    if (chatMessages) chatMessages.style.display = (isGuest || isFree) ? 'none' : '';
+
+    updateSoundLocks();
+    updateSettingsLocks();
+}
+
+function updateSoundLocks() {
+    const isGuest = !user.id;
+    const isPro   = user.id && user.isPro;
+
+    ['rain', 'brown'].forEach(type => {
+        const btn   = document.getElementById(`snd-${type}`);
+        const badge = document.getElementById(`snd-${type}-badge`);
+        if (btn)   btn.classList.toggle('sound-gated', isGuest);
+        if (badge) badge.style.display = isGuest ? '' : 'none';
+    });
+
+    ['white', 'lofi'].forEach(type => {
+        const btn   = document.getElementById(`snd-${type}`);
+        const badge = document.getElementById(`snd-${type}-badge`);
+        if (btn)   btn.classList.toggle('sound-gated', !isPro);
+        if (badge) badge.style.display = isPro ? 'none' : '';
+    });
+}
+
+function updateSettingsLocks() {
+    const isPro = user.id && user.isPro;
+    ['s-work', 's-short'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = !isPro;
+    });
+    document.querySelectorAll('.setting-pro-badge').forEach(b => { b.style.display = isPro ? 'none' : ''; });
+    const saveBtn = document.getElementById('settings-save-btn');
+    if (saveBtn) saveBtn.textContent = isPro ? 'Save Settings' : 'Upgrade to customize →';
+
+    const manageBtn = document.getElementById('manage-sub-btn');
+    if (manageBtn) manageBtn.style.display = isPro ? '' : 'none';
+}
+
+function handleSoundClick(type) {
+    if (!user.id) { openModal('auth-modal'); return; }
+    if (['white', 'lofi'].includes(type) && !user.isPro) { openModal('upgrade-modal'); return; }
+    if (type === 'lofi') { window.open('https://lofi.cafe', '_blank', 'noopener'); return; }
+    toggleSound(type);
+}
+
+// =============================================
+// Stripe / Subscription
+// =============================================
+async function startCheckout() {
+    if (!user.id) { openModal('auth-modal'); return; }
+    try {
+        const res = await fetch('/api/stripe/create-checkout-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ email: '' }),
+        });
+        const data = await res.json();
+        if (data.checkout_url) {
+            sessionStorage.setItem('intime_post_checkout_uid',  user.id);
+            sessionStorage.setItem('intime_post_checkout_name', user.name);
+            window.location.href = data.checkout_url;
+        } else {
+            showToast('Could not start checkout — try again', '⚠️');
+        }
+    } catch (e) {
+        showToast('Could not start checkout — try again', '⚠️');
+    }
+}
+
+async function openBillingPortal() {
+    if (!user.id) return;
+    try {
+        const res = await fetch('/api/stripe/create-portal-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({}),
+        });
+        const data = await res.json();
+        if (data.portal_url) window.location.href = data.portal_url;
+    } catch (e) { console.error('Portal failed:', e); }
+}
+
+async function refreshUserTier() {
+    if (!user.id) return;
+    try {
+        const res  = await fetch('/api/user/subscription', { credentials: 'include' });
+        const data = await res.json();
+        user.isPro = data.is_pro;
+        enableChat();
+        updateLockedUI();
+        updateStatsDisplay();
+    } catch (e) { console.error('Tier refresh failed:', e); }
+}
+
+function showToast(message, icon = '✨', duration = 3000, subtitle = null) {
+    const toast = document.getElementById('toast');
+    if (!toast) return;
+    const msgEl = toast.querySelector('.toast-message');
+    const icoEl = toast.querySelector('.toast-icon');
+    const subEl = toast.querySelector('.toast-sub');
+    if (msgEl) msgEl.textContent = message;
+    if (icoEl) icoEl.textContent = icon;
+    if (subEl) {
+        subEl.textContent = subtitle || '';
+        subEl.style.display = subtitle ? '' : 'none';
+    }
+    toast.classList.toggle('toast-warning', icon === '⚠️');
+    toast.classList.add('visible');
+    clearTimeout(toast._hideTimer);
+    toast._hideTimer = setTimeout(() => toast.classList.remove('visible'), duration);
+}
+
+// =============================================
 // Google Sign-In
 // =============================================
-window.handleCredentialResponse = async (response) => {
+
+// Programmatic GSI — avoids the auto-prompt flash on page reload.
+// We render the button only after /auth/me confirms no valid session exists.
+window.onGoogleLibraryLoad = function () {
+    _gsiReady = true;
+    if (_gsiPending) { _gsiPending = false; _renderGoogleButton(); }
+};
+
+function _initGoogleSignIn() {
+    if (!_gsiReady) { _gsiPending = true; return; }
+    _renderGoogleButton();
+}
+
+function _renderGoogleButton() {
+    google.accounts.id.initialize({
+        client_id: '121246915230-hrfas5irqhnb8sgg8qoc37ba51dqkg0g.apps.googleusercontent.com',
+        callback: handleCredentialResponse,
+        auto_select: false,
+    });
+    const el = document.getElementById('google-signin-btn');
+    if (el) {
+        el.style.display = '';
+        google.accounts.id.renderButton(el, { type: 'standard', size: 'medium' });
+    }
+}
+
+async function handleCredentialResponse(response) {
+    // Verify Google token server-side and establish a signed session cookie.
+    try {
+        const authRes = await fetch('/auth/google', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ credential: response.credential }),
+        });
+        if (!authRes.ok) {
+            showToast('Sign-in failed — please try again', '⚠️');
+            return;
+        }
+    } catch {
+        showToast('Sign-in failed — please try again', '⚠️');
+        return;
+    }
+
+    // Decode payload for display only (name, avatar). Auth is already settled above.
     const payload = JSON.parse(atob(response.credential.split('.')[1]));
     user.id   = payload.sub;
     user.name = payload.given_name || payload.name || 'Friend';
+    localStorage.setItem('intime_last_user_id', user.id);
+    localStorage.setItem('intime_last_user_name', user.name);
+    localStorage.setItem('intime_has_session', '1');
+    closeAllModals();
 
     document.getElementById('user-avatar').textContent = user.name[0].toUpperCase();
     document.getElementById('user-name').textContent   = user.name;
     document.getElementById('user-badge').style.display = 'flex';
-    document.querySelector('.g_id_signin').style.display = 'none';
+    document.getElementById('google-signin-btn').style.display = 'none';
 
-    enableChat();
-    renderTasks(); // re-render to show breakdown buttons
+    updateLockedUI();
+    renderTasks();
 
     try {
-        const res  = await fetch(`/get-profile/${user.id}`);
+        const res  = await fetch('/get-profile', { credentials: 'include' });
         const data = await res.json();
-        timer.minutesToday  = data.today_minutes  || 0;
-        timer.sessionsToday = data.today_sessions || timer.sessionsToday;
-        user.streak         = data.streak         || 0;
-        user.isReturning    = data.is_returning   || false;
+        minutesToday  = data.today_minutes  || 0;
+        sessionsToday = data.today_sessions || sessionsToday;
+        user.streak       = data.streak       || 0;
+        user.isReturning  = data.is_returning || false;
+        user.isPro        = data.is_pro       || false;
+
+        if (user.isPro && data.timer_work) {
+            settings = {
+                focus: data.timer_work  || settings.focus,
+                break: data.timer_short || settings.break,
+            };
+            localStorage.setItem('intime_settings', JSON.stringify(settings));
+            loadSettingsUI();
+            if (appState === 'idle') {
+                timerTotalSecs  = settings[timerMode] * 60;
+                timerRemainSecs = timerTotalSecs;
+                updateTimerDisplay();
+                updateRing();
+                updateQuickPicks();
+            }
+        }
+
+        enableChat();
+        updateLockedUI();
         updateStatsDisplay();
     } catch (e) { console.error('Profile load failed:', e); }
 
-    document.getElementById('signin-prompt')?.remove();
+    const _upgraded = sessionStorage.getItem('intime_upgraded_pending');
+    if (_upgraded) {
+        sessionStorage.removeItem('intime_upgraded_pending');
+        if (user.isPro) {
+            showToast('Welcome to Pro ✨', '✨');
+        } else {
+            let polls = 0;
+            const _poll = setInterval(async () => {
+                polls++;
+                await refreshUserTier();
+                if (user.isPro || polls >= 15) {
+                    clearInterval(_poll);
+                    if (user.isPro) showToast('Welcome to Pro ✨', '✨');
+                    else showToast('Upgrade processing — check back shortly', 'ℹ️');
+                }
+            }, 1000);
+        }
+    } else if (user.isPro) {
+        showToast('Welcome back ✨', '✨');
+    } else {
+        showToast('Task list unlocked!', '🎉');
+    }
 
-    // Switch to per-user task storage — migrate from anon if first login on this device
     const userKey = `intime_tasks_${user.id}`;
     if (!localStorage.getItem(userKey)) {
         const anonTasks = localStorage.getItem('intime_tasks_anon') || localStorage.getItem('dopamine_tasks');
@@ -118,7 +549,8 @@ window.handleCredentialResponse = async (response) => {
     renderTasks();
     fetchMissingEstimates();
 
-    // Daily brief for returning users on first open of the day
+    if (!user.isPro) return;
+
     if (user.isReturning && shouldShowDailyBrief()) {
         triggerDailyBrief();
     } else if (user.isReturning) {
@@ -135,37 +567,70 @@ window.handleCredentialResponse = async (response) => {
             ['I have a few tasks', "I don't know where to start", 'Help me plan']
         );
     }
-};
+}
+window.handleCredentialResponse = handleCredentialResponse;
+
+// Handle pending credential from sessionStorage (must run after function is defined)
+(function () {
+    const _pendingCred = sessionStorage.getItem('google_credential');
+    if (_pendingCred) {
+        sessionStorage.removeItem('google_credential');
+        handleCredentialResponse({ credential: _pendingCred });
+    }
+})();
 
 function enableChat() {
+    if (!user.isPro) return;
     document.getElementById('chat-input').disabled = false;
     document.getElementById('send-btn').disabled   = false;
 }
 
-function logOut() {
-    if (typeof google !== 'undefined') google.accounts.id.disableAutoSelect();
+async function _loadChatHistory() {
+    if (!user.isPro) return;
+    try {
+        const res = await fetch('/chat/history', { credentials: 'include' });
+        if (!res.ok) return;
+        const messages = await res.json();
+        if (!messages.length) return;
+        const box = document.getElementById('chat-messages');
+        if (!box) return;
+        for (const msg of messages) {
+            if (msg.role === 'user') {
+                appendUserMessage(msg.content);
+            } else {
+                appendAiMessage(msg.content, []);
+            }
+            chatHistory.push({ role: msg.role, text: msg.content });
+        }
+        if (chatHistory.length > 40) chatHistory = chatHistory.slice(-40);
+        box.scrollTop = box.scrollHeight;
+    } catch {}
+}
 
-    user = { id: null, name: 'Friend', streak: 0, isReturning: false, energyLevel: null };
+async function logOut() {
+    if (typeof google !== 'undefined') google.accounts.id.disableAutoSelect();
+    try { await fetch('/auth/logout', { method: 'POST', credentials: 'include' }); } catch {};
+
+    localStorage.removeItem('intime_has_session');
+    user = { id: null, name: 'Friend', streak: 0, isReturning: false, energyLevel: null, isPro: false };
     chatHistory = [];
-    timer.sessionsToday = 0;
-    timer.minutesToday  = 0;
+    sessionsToday = 0;
+    minutesToday  = 0;
 
     document.getElementById('user-badge').style.display = 'none';
-    const signInEl = document.querySelector('.g_id_signin');
-    if (signInEl) signInEl.style.display = '';
+    // Re-render the sign-in button (clears previous render state first).
+    const btnEl = document.getElementById('google-signin-btn');
+    if (btnEl) btnEl.innerHTML = '';
+    _initGoogleSignIn();
 
-    document.getElementById('chat-messages').innerHTML = `
-        <div class="signin-prompt" id="signin-prompt">
-            <div class="signin-icon">🧠</div>
-            <p>Sign in to chat with your<br><strong>Study Friend</strong></p>
-            <p class="signin-sub">Your ADHD-aware focus companion</p>
-        </div>`;
+    document.getElementById('chat-messages').innerHTML = '';
     document.getElementById('chat-input').disabled = true;
     document.getElementById('send-btn').disabled   = true;
     document.getElementById('suggestions').innerHTML = '';
     const statusEl = document.getElementById('ai-status');
     if (statusEl) { statusEl.textContent = 'Ready to help'; statusEl.className = 'chat-status'; }
 
+    updateLockedUI();
     tasks = loadTasks();
     renderTasks();
     updateStatsDisplay();
@@ -183,7 +648,6 @@ function loadTasks() {
     try {
         const stored = localStorage.getItem(key);
         if (stored) return JSON.parse(stored);
-        // Migration: check legacy key for anonymous / first load
         const legacy = localStorage.getItem('intime_tasks_anon') || localStorage.getItem('dopamine_tasks');
         if (legacy) { localStorage.setItem(key, legacy); return JSON.parse(legacy); }
         return [];
@@ -200,6 +664,7 @@ function genId() {
 
 document.getElementById('task-form').addEventListener('submit', (e) => {
     e.preventDefault();
+    if (!user.id) { openModal('auth-modal'); return; }
     const input = document.getElementById('task-input');
     const title = input.value.trim();
     if (!title) return;
@@ -214,7 +679,7 @@ document.getElementById('task-form').addEventListener('submit', (e) => {
 function toggleTask(id) {
     const task = tasks.find(t => t.id === id);
     if (!task) return;
-    if (!task.done && user.id) recordTaskCompletion(task); // fire-and-forget
+    if (!task.done && user.id) recordTaskCompletion(task);
     task.done = !task.done;
     if (task.done && activeTaskId === id) setActiveTask(null);
     saveTasks();
@@ -226,7 +691,8 @@ async function recordTaskCompletion(task) {
         await fetch('/record-task-completion', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ userId: user.id, taskTitle: task.title, minutesSpent: task.actualMins || 0 }),
+            credentials: 'include',
+            body:    JSON.stringify({ taskTitle: task.title, minutesSpent: task.actualMins || 0 }),
         });
     } catch (e) { console.error('Task completion record failed:', e); }
 }
@@ -270,7 +736,7 @@ function taskHtml(task) {
     const isActive = task.id === activeTaskId;
     const showBreak = !task.done && user.id;
     const est = (!task.done && task.estimatedMins)
-        ? `<span class="task-est" title="${escHtml(task.estimateSource || 'estimated')}">~${task.estimatedMins}m</span>`
+        ? `<span class="task-est" title="double-click to edit" ondblclick="editEstimate('${task.id}')">~${task.estimatedMins}m</span>`
         : '';
     return `
     <li class="task-item${isActive ? ' active-task' : ''}" data-id="${task.id}">
@@ -303,6 +769,47 @@ function toggleDoneSection() {
 }
 
 // =============================================
+// Editable Estimates
+// =============================================
+function editEstimate(id) {
+    const li = document.querySelector(`.task-item[data-id="${id}"]`);
+    if (!li) return;
+    const span = li.querySelector('.task-est');
+    if (!span) return;
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min  = '1';
+    input.max  = '999';
+    input.value = task.estimatedMins || '';
+    input.className = 'task-est-edit';
+
+    let saved = false;
+    const save = () => {
+        if (saved) return;
+        saved = true;
+        const val = parseInt(input.value);
+        if (val > 0) {
+            task.estimatedMins  = val;
+            task.estimateSource = 'edited by you';
+            saveTasks();
+        }
+        renderTasks();
+    };
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter')  { e.preventDefault(); input.blur(); }
+        if (e.key === 'Escape') { saved = true; renderTasks(); }
+    });
+    input.addEventListener('blur', save);
+
+    span.replaceWith(input);
+    input.focus();
+    input.select();
+}
+
+// =============================================
 // Task Breakdown (AI)
 // =============================================
 async function breakdownTask(taskId) {
@@ -314,7 +821,8 @@ async function breakdownTask(taskId) {
         const res = await fetch('/breakdown', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ task: task.title, userName: user.name, userId: user.id }),
+            credentials: 'include',
+            body: JSON.stringify({ task: task.title, userName: user.name }),
         });
         const data = await res.json();
         typingEl.remove();
@@ -331,172 +839,981 @@ async function breakdownTask(taskId) {
 }
 
 // =============================================
-// Pomodoro Timer
+// Timer — Mode
 // =============================================
-function switchMode(mode) {
-    if (timer.running) timerToggle();
-    timer.mode      = mode;
-    timer.remaining = MODES[mode].seconds;
-    timer.total     = MODES[mode].seconds;
+function setMode(mode) {
+    if (mode === 'wasted') {
+        if (appState !== 'wasted') showToast('Tracked automatically when you don\'t respond', 'ℹ️');
+        return;
+    }
+
+    if (appState === 'wasted') return;
+
+    if (appState === 'focus_running' || appState === 'break_running' ||
+        appState === 'focus_paused'  || appState === 'break_paused') {
+        const running = timerMode === 'focus' ? 'Focus' : 'Break';
+        showToast(
+            'A session is already running',
+            '⚠️',
+            4000,
+            `Finish or save your current ${running} session before switching`
+        );
+        return;
+    }
+
+    timerMode        = mode;
+    timerTotalSecs   = settings[mode] * 60;
+    timerRemainSecs  = timerTotalSecs;
+    timerElapsedSecs = 0;
+    timerStartedAt   = null;
+    appState         = 'idle';
+
     updateTimerDisplay();
     updateRing();
-    updateFocusPanelColor();
-    document.querySelectorAll('.mode-tab').forEach(btn => {
+    updateFocusPanelTheme();
+    updateIcons();
+    updateQuickPicks();
+    updateModeTabDots();
+    _setActiveModeTab(mode);
+
+    const label = document.getElementById('ring-label');
+    if (label) label.textContent = mode === 'focus' ? 'FOCUS' : 'BREAK';
+}
+
+function _setActiveModeTab(mode) {
+    document.querySelectorAll('.mode-tog').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.mode === mode);
     });
 }
 
-function timerToggle() {
-    if (!timer.running) {
-        // Energy check-in — once per sign-in session
-        if (user.id && user.energyLevel === null && timer.mode === 'work') {
+// =============================================
+// Timer — Navbar Session Badge
+// =============================================
+function updateNavSessionBadge() {
+    const badge = document.getElementById('nav-session-badge');
+    if (!badge) return;
+
+    const isActive = ['focus_running', 'focus_paused', 'break_running', 'break_paused', 'wasted'].includes(appState);
+    badge.style.display = isActive ? 'flex' : 'none';
+    if (!isActive) return;
+
+    let icon, modeLabel, timeStr;
+    if (appState === 'wasted') {
+        icon = '⏳'; modeLabel = 'Wasted';
+        if (wastedStartedAt) {
+            const e = Math.floor((Date.now() - wastedStartedAt) / 1000);
+            const mm = Math.floor(e / 60).toString().padStart(2, '0');
+            const ss = (e % 60).toString().padStart(2, '0');
+            timeStr = `${mm}:${ss}`;
+        } else { timeStr = ''; }
+    } else {
+        icon = timerMode === 'focus' ? '🎯' : '☕';
+        modeLabel = timerMode === 'focus' ? 'Focus' : 'Break';
+        const mm = Math.floor(timerRemainSecs / 60).toString().padStart(2, '0');
+        const ss = (timerRemainSecs % 60).toString().padStart(2, '0');
+        timeStr = `${mm}:${ss}`;
+    }
+
+    const lbl = badge.querySelector('.nsb-label');
+    if (lbl) lbl.textContent = `${icon} ${modeLabel} · ${timeStr}`;
+
+    const isPulsing = appState === 'focus_running' || appState === 'break_running' || appState === 'wasted';
+    badge.classList.toggle('nsb-running', isPulsing);
+}
+
+function navBadgeClick() {
+    closeAllModals();
+    const panel = document.getElementById('focus-panel');
+    if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// =============================================
+// Timer — Tab Dots & Wasted Label
+// =============================================
+function updateModeTabDots() {
+    document.querySelectorAll('.mode-tog').forEach(btn => {
+        const mode = btn.dataset.mode;
+        const isRunning =
+            (mode === 'focus'  && (appState === 'focus_running'  || appState === 'focus_paused'))  ||
+            (mode === 'break'  && (appState === 'break_running'  || appState === 'break_paused'))  ||
+            (mode === 'wasted' && appState === 'wasted');
+        btn.classList.toggle('running', isRunning);
+    });
+}
+
+function updateWastedTabLabel() {
+    const btn = document.querySelector('.mode-tog[data-mode="wasted"]');
+    if (!btn) return;
+    const w = todayTracking.wasted || 0;
+    if (appState !== 'wasted' && w > 0) {
+        btn.textContent = `Wasted · ${fmtDuration(w)}`;
+    } else {
+        btn.textContent = 'Wasted';
+    }
+}
+
+// =============================================
+// Timer — Quick Picks
+// =============================================
+function fmtPillDuration(secs) {
+    if (secs >= 3600) {
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60).toString().padStart(2, '0');
+        const s = (secs % 60).toString().padStart(2, '0');
+        return `${h}:${m}:${s}`;
+    }
+    const m = Math.floor(secs / 60).toString().padStart(2, '0');
+    const s = (secs % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+}
+
+function updateQuickPicks() {
+    const container = document.getElementById('dp-pills');
+    if (!container) return;
+
+    if (appState === 'wasted') { container.innerHTML = ''; return; }
+
+    const picks = timerMode === 'focus' ? FOCUS_PICKS : BREAK_PICKS;
+    const isCustom = !picks.includes(timerTotalSecs);
+
+    const pillsHtml = picks.map(secs => {
+        const label = secs >= 3600 ? `${secs / 3600}h` : `${secs / 60}m`;
+        const isActive = secs === timerTotalSecs;
+        return `<button class="dp-pill${isActive ? ' active' : ''}" onclick="selectQuickPick(${secs})">${label}</button>`;
+    }).join('');
+
+    const customLabel = isCustom ? `Custom · ${fmtPillDuration(timerTotalSecs)}` : 'Custom';
+    const customHtml = `<button class="dp-pill${isCustom ? ' active' : ''}" onclick="openCustomDuration()">${customLabel}</button>`;
+
+    container.innerHTML = pillsHtml + customHtml;
+}
+
+function selectQuickPick(secs) {
+    if (['focus_running', 'break_running', 'focus_paused', 'break_paused', 'wasted'].includes(appState)) {
+        showToast('Pause or save your session to change duration', 'ℹ️');
+        return;
+    }
+    if (appState === 'awaiting_response') return;
+
+    timerTotalSecs   = secs;
+    timerRemainSecs  = secs;
+    timerElapsedSecs = 0;
+    settings[timerMode] = Math.max(1, Math.round(secs / 60));
+    localStorage.setItem('intime_settings', JSON.stringify(settings));
+
+    updateTimerDisplay();
+    updateRing();
+    updateQuickPicks();
+}
+
+function openCustomDuration() {
+    if (['focus_running', 'break_running', 'focus_paused', 'break_paused', 'wasted'].includes(appState)) {
+        showToast('Pause or save your session to change duration', 'ℹ️');
+        return;
+    }
+    if (appState === 'awaiting_response') return;
+    openWheelPicker(timerTotalSecs, selectQuickPick);
+}
+
+// =============================================
+// Timer — Wheel Picker
+// =============================================
+function buildSimpleWheel(containerId, max, initVal) {
+    const container = document.getElementById(containerId);
+    if (!container) return null;
+
+    const ITEM_H = 44;
+    container.innerHTML = '';
+    container.style.cssText = `height:${ITEM_H * 5}px;position:relative;overflow:hidden;user-select:none;`;
+
+    const list = document.createElement('div');
+    list.className = 'wp-list';
+
+    const itemEls = [];
+    for (let i = 0; i <= max; i++) {
+        const item = document.createElement('div');
+        item.className = 'wp-item';
+        item.textContent = String(i).padStart(2, '0');
+        item.addEventListener('click', () => selectIdx(i));
+        list.appendChild(item);
+        itemEls.push(item);
+    }
+    container.appendChild(list);
+
+    // Selection lines
+    const tl = document.createElement('div');
+    tl.className = 'wp-sel-line';
+    tl.style.top = (ITEM_H * 2) + 'px';
+    const bl = document.createElement('div');
+    bl.className = 'wp-sel-line';
+    bl.style.top = (ITEM_H * 3) + 'px';
+    container.appendChild(tl);
+    container.appendChild(bl);
+
+    // Gradient masks
+    const tm = document.createElement('div');
+    tm.className = 'wp-mask wp-mask-top';
+    tm.style.height = (ITEM_H * 2) + 'px';
+    const bm = document.createElement('div');
+    bm.className = 'wp-mask wp-mask-bot';
+    bm.style.height = (ITEM_H * 2) + 'px';
+    container.appendChild(tm);
+    container.appendChild(bm);
+
+    let selIdx = Math.max(0, Math.min(max, initVal));
+
+    function render(idx, animate) {
+        selIdx = Math.max(0, Math.min(max, idx));
+        list.style.transition = animate ? 'transform 0.15s ease' : 'none';
+        list.style.transform = `translateY(${ITEM_H * 2 - selIdx * ITEM_H}px)`;
+        itemEls.forEach((el, i) => {
+            const d = Math.abs(i - selIdx);
+            el.style.fontSize   = d === 0 ? '22px' : '15px';
+            el.style.fontWeight = d === 0 ? '600'  : '400';
+            el.style.opacity    = d === 0 ? '1'    : d === 1 ? '0.45' : '0.18';
+        });
+        _wpUpdateBtn();
+    }
+
+    function selectIdx(idx) { render(idx, true); }
+
+    container.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        render(selIdx + (e.deltaY > 0 ? 1 : -1), true);
+    }, { passive: false });
+
+    // Touch drag
+    let dragY = null;
+    container.addEventListener('touchstart', e => { dragY = e.touches[0].clientY; }, { passive: true });
+    container.addEventListener('touchmove',  e => { e.preventDefault(); }, { passive: false });
+    container.addEventListener('touchend',   e => {
+        if (dragY === null) return;
+        const dy = dragY - e.changedTouches[0].clientY;
+        dragY = null;
+        render(selIdx + Math.round(dy / ITEM_H), true);
+    });
+
+    render(selIdx, false);
+    return { getValue: () => selIdx, setValue: (v, anim = true) => render(v, anim) };
+}
+
+function openWheelPicker(totalSecs, callback) {
+    _wpCallback = callback;
+    totalSecs = Math.max(1, Math.min(3 * 3600, totalSecs));
+    const h = Math.floor(totalSecs / 3600);
+    const m = Math.floor((totalSecs % 3600) / 60);
+    const s = totalSecs % 60;
+
+    _wpWheels.h = buildSimpleWheel('wp-h', 3,  h);
+    _wpWheels.m = buildSimpleWheel('wp-m', 59, m);
+    _wpWheels.s = buildSimpleWheel('wp-s', 59, s);
+
+    const subtitle = document.getElementById('wp-subtitle');
+    if (subtitle) {
+        subtitle.textContent =
+            timerMode === 'focus' ? 'Focus' :
+            timerMode === 'break' ? 'Break' : '';
+    }
+
+    document.getElementById('wp-overlay').style.display = 'block';
+    document.getElementById('wheel-picker-modal').classList.add('open');
+}
+
+function closeWheelPicker() {
+    document.getElementById('wp-overlay').style.display = 'none';
+    document.getElementById('wheel-picker-modal').classList.remove('open');
+    _wpCallback = null;
+}
+
+function confirmWheelPicker() {
+    const h = _wpWheels.h ? _wpWheels.h.getValue() : 0;
+    const m = _wpWheels.m ? _wpWheels.m.getValue() : 0;
+    const s = _wpWheels.s ? _wpWheels.s.getValue() : 0;
+    const total = h * 3600 + m * 60 + s;
+    if (total === 0) return;
+    const capped = Math.min(3 * 3600, total);
+    closeWheelPicker();
+    if (_wpCallback) _wpCallback(capped);
+}
+
+function _wpUpdateBtn() {
+    const btn = document.getElementById('wp-confirm-btn');
+    if (!btn) return;
+    const h = _wpWheels.h ? _wpWheels.h.getValue() : 0;
+    const m = _wpWheels.m ? _wpWheels.m.getValue() : 0;
+    const s = _wpWheels.s ? _wpWheels.s.getValue() : 0;
+    btn.disabled = (h === 0 && m === 0 && s === 0);
+}
+
+// =============================================
+// Timer — Icon Controls
+// =============================================
+function handlePlay() {
+    const s = appState;
+    if (s === 'focus_running' || s === 'break_running') {
+        pauseTimer();
+    } else if (s === 'idle') {
+        if (user.isPro && user.energyLevel === null && timerMode === 'focus') {
             pendingTimerStart = true;
             openModal('energy-modal');
             return;
         }
         startTimer();
-    } else {
-        pauseTimer();
     }
 }
 
-function startTimer() {
-    timer.running  = true;
-    timer.interval = setInterval(timerTick, 1000);
-    const btn = document.getElementById('timer-toggle');
-    btn.textContent = 'Pause';
-    btn.classList.add('running');
+function handleResume() {
+    if (appState !== 'focus_paused' && appState !== 'break_paused') return;
+    startTimer();
+}
+
+function handleSave() {
+    if (appState === 'wasted') { saveWasted(); return; }
+
+    let elapsed = timerElapsedSecs;
+    if (timerStartedAt) elapsed += Math.floor((Date.now() - timerStartedAt) / 1000);
+    if (elapsed < 3) return;
+
+    clearInterval(timerInterval);
+    timerInterval = null;
+
+    const mins    = Math.floor(elapsed / 60);
+    const apiMins = mins > 0 ? mins : (elapsed >= 30 ? 1 : 0);
+
+    addToTracking(timerMode, elapsed);
+
+    if (user.id && apiMins > 0) {
+        if (timerMode === 'focus') {
+            sessionsToday++;
+            saveTodaySessions(sessionsToday);
+            minutesToday += apiMins;
+            const activeTask = tasks.find(t => t.id === activeTaskId);
+            if (activeTask) { activeTask.actualMins = (activeTask.actualMins || 0) + apiMins; saveTasks(); }
+        }
+        fetch('/complete-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ minutes: apiMins }),
+        }).then(r => r.json()).then(data => {
+            minutesToday  = data.today_minutes;
+            sessionsToday = data.today_sessions;
+            user.streak   = data.streak ?? user.streak;
+            updateStatsDisplay();
+        }).catch(e => console.error('Session save failed:', e));
+    }
+
+    appState         = 'idle';
+    timerElapsedSecs = 0;
+    timerStartedAt   = null;
+    timerRemainSecs  = timerTotalSecs;
+    _clearTimerState();
+
+    document.getElementById('focus-panel').classList.remove('timer-running');
+    updateTimerDisplay();
+    updateRing();
+    updateIcons();
+    updateQuickPicks();
+    updateNavSessionBadge();
+    updateModeTabDots();
+    updateStatsDisplay();
+    launchConfetti('small');
+    showToast(`${fmtDuration(elapsed)} session saved!`, '✅');
+}
+
+function updateIcons() {
+    const s         = appState;
+    const isWasted  = s === 'wasted';
+    const isRunning = s === 'focus_running' || s === 'break_running';
+    const isPaused  = s === 'focus_paused'  || s === 'break_paused';
+    const isIdle    = s === 'idle';
+
+    const btnPlay   = document.getElementById('btn-play');
+    const btnResume = document.getElementById('btn-resume');
+    const btnSave   = document.getElementById('btn-save');
+    if (!btnPlay) return;
+
+    if (isWasted) {
+        btnPlay.style.display   = 'none';
+        btnResume.style.display = 'none';
+        btnSave.style.display   = '';
+        btnSave.classList.remove('t-icon-dim');
+        return;
+    }
+    if (s === 'awaiting_response') {
+        btnPlay.style.display = btnResume.style.display = btnSave.style.display = '';
+        btnPlay.classList.add('t-icon-dim');
+        btnResume.classList.add('t-icon-dim');
+        btnSave.classList.add('t-icon-dim');
+        return;
+    }
+
+    btnPlay.style.display = btnResume.style.display = btnSave.style.display = '';
+
+    const iconPlay  = btnPlay.querySelector('.icon-play');
+    const iconPause = btnPlay.querySelector('.icon-pause');
+    if (iconPlay)  iconPlay.style.display  = isRunning ? 'none' : '';
+    if (iconPause) iconPause.style.display = isRunning ? '' : 'none';
+    btnPlay.classList.toggle('t-icon-dim', isPaused);
+    btnPlay.title = isRunning ? 'Pause' : 'Start';
+
+    btnResume.classList.toggle('t-icon-dim', !isPaused);
+
+    const hasElapsed = timerElapsedSecs > 0 ||
+        (timerStartedAt !== null && Date.now() - timerStartedAt > 5000);
+    btnSave.classList.toggle('t-icon-dim', isIdle || (!isRunning && !isPaused) || !hasElapsed);
+}
+
+// =============================================
+// Timer — Persistence
+// =============================================
+
+async function _saveTimerState() {
+    const state = {
+        mode:          timerMode,
+        status:        appState.startsWith('focus_') || appState.startsWith('break_')
+                           ? (appState.endsWith('_running') ? 'running' : 'paused')
+                           : appState,   // 'wasted'
+        duration_secs: timerTotalSecs,
+        started_at:    timerStartedAt,
+        elapsed_secs:  timerElapsedSecs,
+        wasted_at:     wastedStartedAt,
+    };
+    if (!user.id) {
+        localStorage.setItem('intime_timer_state', JSON.stringify(state));
+        return;
+    }
+    try {
+        await fetch('/timer/state', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(state),
+        });
+    } catch {}
+}
+
+async function _clearTimerState() {
+    localStorage.removeItem('intime_timer_state');
+    if (!user.id) return;
+    try { await fetch('/timer/state', { method: 'DELETE', credentials: 'include' }); } catch {}
+}
+
+async function _restoreTimerState() {
+    let state = null;
+    if (user.id) {
+        try {
+            const res = await fetch('/timer/state', { credentials: 'include' });
+            if (res.ok) state = await res.json();
+        } catch {}
+    } else {
+        try { state = JSON.parse(localStorage.getItem('intime_timer_state') || 'null'); } catch {}
+    }
+    if (!state || !state.status) return;
+    _applyTimerState(state);
+}
+
+async function _applyTimerState(state) {
+    if (state.status === 'wasted') {
+        enterWastedState();                                        // does UI + save (wastedStartedAt wrong here)
+        wastedStartedAt = state.wasted_at || wastedStartedAt;     // correct the timestamp
+        _saveTimerState();                                         // re-save with correct wasted_at
+        return;
+    }
+
+    timerMode      = state.mode || 'focus';
+    timerTotalSecs = state.duration_secs || settings[timerMode] * 60;
+
+    if (state.status === 'paused') {
+        timerElapsedSecs = state.elapsed_secs || 0;
+        timerRemainSecs  = Math.max(0, timerTotalSecs - timerElapsedSecs);
+        timerStartedAt   = null;
+        appState = timerMode === 'focus' ? 'focus_paused' : 'break_paused';
+        _setActiveModeTab(timerMode);
+        updateFocusPanelTheme();
+        updateTimerDisplay(); updateRing(); updateIcons(); updateModeTabDots();
+        updateNavSessionBadge(); updateQuickPicks();
+        return;
+    }
+
+    // status === 'running': calculate actual elapsed including time since last save
+    const nowMs = Date.now();
+    const runMs = state.started_at ? (nowMs - state.started_at) : 0;
+    const totalElapsed = (state.elapsed_secs || 0) + Math.floor(runMs / 1000);
+
+    if (totalElapsed >= timerTotalSecs) {
+        // Timer completed while page was closed/refreshed
+        const completedAtMs   = state.started_at + (timerTotalSecs - (state.elapsed_secs || 0)) * 1000;
+        const secsSinceComplete = Math.floor((nowMs - completedAtMs) / 1000);
+
+        if (secsSinceComplete < 300) {
+            // Popup window still open — simulate completion (timerComplete clears state)
+            timerElapsedSecs = timerTotalSecs;
+            timerRemainSecs  = 0;
+            appState = timerMode === 'focus' ? 'focus_running' : 'break_running';
+            await timerComplete();
+        } else {
+            // Popup expired → wasted state, counting from when popup closed
+            enterWastedState();                         // UI + save (wastedStartedAt = now-300s, wrong)
+            wastedStartedAt = completedAtMs + 300000;   // correct: wasted since popup expired
+            _saveTimerState();                          // re-save with correct timestamp, do NOT clear
+        }
+        return;
+    }
+
+    // Timer still running — resume with corrected elapsed
+    timerElapsedSecs = totalElapsed;
+    timerStartedAt   = Date.now();
+    timerRemainSecs  = Math.max(0, timerTotalSecs - timerElapsedSecs);
+    appState = timerMode === 'focus' ? 'focus_running' : 'break_running';
+
+    timerInterval = setInterval(timerTick, 500);
     document.getElementById('focus-panel').classList.add('timer-running');
+    _setActiveModeTab(timerMode);
+    updateFocusPanelTheme();
+    updateTimerDisplay(); updateRing(); updateIcons(); updateModeTabDots();
+    updateNavSessionBadge(); updateQuickPicks();
+}
+
+// =============================================
+// Timer — Core
+// =============================================
+function startTimer() {
+    timerStartedAt = Date.now();
+    appState = timerMode === 'focus' ? 'focus_running' : 'break_running';
+    timerInterval = setInterval(timerTick, 500);
+    document.getElementById('focus-panel').classList.add('timer-running');
+    updateIcons();
+    updateModeTabDots();
+    updateNavSessionBadge();
+    _saveTimerState();
 }
 
 function pauseTimer() {
-    timer.running = false;
-    clearInterval(timer.interval);
-    const btn = document.getElementById('timer-toggle');
-    btn.textContent = 'Resume';
-    btn.classList.remove('running');
+    if (timerStartedAt) {
+        timerElapsedSecs += Math.floor((Date.now() - timerStartedAt) / 1000);
+    }
+    timerRemainSecs = Math.max(0, timerTotalSecs - timerElapsedSecs);
+    timerStartedAt  = null;
+    clearInterval(timerInterval);
+    timerInterval = null;
+    appState = timerMode === 'focus' ? 'focus_paused' : 'break_paused';
     document.getElementById('focus-panel').classList.remove('timer-running');
-}
-
-function timerSkip() {
-    if (timer.running) pauseTimer();
-    advanceMode(false);
+    updateTimerDisplay();
+    updateIcons();
+    updateModeTabDots();
+    updateNavSessionBadge();
+    _saveTimerState();
 }
 
 function timerTick() {
-    timer.remaining--;
+    const runElapsed   = timerStartedAt ? Math.floor((Date.now() - timerStartedAt) / 1000) : 0;
+    const totalElapsed = timerElapsedSecs + runElapsed;
+    timerRemainSecs    = Math.max(0, timerTotalSecs - totalElapsed);
     updateTimerDisplay();
     updateRing();
-    if (timer.remaining <= 0) timerComplete();
+    updateNavSessionBadge();
+    if (timerRemainSecs <= 0) timerComplete();
 }
 
 async function timerComplete() {
-    clearInterval(timer.interval);
-    timer.running = false;
-    document.getElementById('timer-toggle').textContent = 'Start';
-    document.getElementById('timer-toggle').classList.remove('running');
+    clearInterval(timerInterval);
+    timerInterval = null;
     document.getElementById('focus-panel').classList.remove('timer-running');
 
-    if (timer.mode === 'work') {
-        timer.cycleCount++;
-        timer.sessionsToday++;
-        saveTodaySessions(timer.sessionsToday);
-        const mins = Math.floor(MODES.work.seconds / 60);
-        timer.minutesToday += mins;
+    const completedMode = timerMode;
+    const mins = Math.round(timerTotalSecs / 60);
 
-        // Accumulate actual time spent on the active task
-        if (activeTaskId) {
-            const activeTask = tasks.find(t => t.id === activeTaskId);
-            if (activeTask) { activeTask.actualMins = (activeTask.actualMins || 0) + mins; saveTasks(); }
-        }
+    addToTracking(completedMode, timerTotalSecs);
+    if (completedMode === 'focus') {
+        sessionsToday++;
+        saveTodaySessions(sessionsToday);
+        minutesToday += mins;
+        const activeTask = tasks.find(t => t.id === activeTaskId);
+        if (activeTask) { activeTask.actualMins = (activeTask.actualMins || 0) + mins; saveTasks(); }
+    }
 
-        // Save to Supabase
-        if (user.id) {
-            try {
-                const res  = await fetch('/complete-session', {
-                    method:  'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body:    JSON.stringify({ userId: user.id, minutes: mins }),
-                });
-                const data = await res.json();
-                timer.minutesToday  = data.today_minutes;
-                timer.sessionsToday = data.today_sessions;
-                user.streak         = data.streak ?? user.streak;
-            } catch (e) { console.error('Session save failed:', e); }
-        }
+    if (user.id) {
+        try {
+            const res  = await fetch('/complete-session', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ minutes: mins }),
+            });
+            const data = await res.json();
+            minutesToday  = data.today_minutes;
+            sessionsToday = data.today_sessions;
+            user.streak   = data.streak ?? user.streak;
+        } catch (e) { console.error('Session save failed:', e); }
+    }
 
-        updateStatsDisplay();
+    updateStatsDisplay();
+    const isStreakMilestone = STREAK_MILESTONES.has(user.streak);
+    launchConfetti(isStreakMilestone ? 'big' : 'small');
 
-        // Confetti 🎉
-        const isStreakMilestone = STREAK_MILESTONES.has(user.streak);
-        launchConfetti(isStreakMilestone ? 'big' : 'small');
-
-        // AI celebration
+    if (user.isPro && completedMode === 'focus') {
         const activeTask = tasks.find(t => t.id === activeTaskId);
         sendChatInternal(
             `I just completed a ${mins}-minute focus session!` +
             (activeTask ? ` I was working on "${activeTask.title}".` : '') +
             (isStreakMilestone ? ` I'm on a ${user.streak}-day streak!` : '')
         );
-
-        // Advance to break
-        const nextMode = timer.cycleCount >= 4 ? 'long' : 'short';
-        if (timer.cycleCount >= 4) timer.cycleCount = 0;
-        renderSessionDots();
-        advanceMode(true, nextMode);
-
-    } else {
-        // Break ended
-        advanceMode(false, 'work');
-        if (user.id) {
-            appendAiMessage(
-                `Break's over! Ready to get back into it, ${user.name}? 💪\nClick **Start** whenever you're ready.`,
-                ['Start focusing', 'Need 5 more min', "What should I work on?"]
-            );
-        }
     }
+
+    timerElapsedSecs = 0;
+    timerStartedAt   = null;
+    timerRemainSecs  = timerTotalSecs;
+    appState = 'awaiting_response';
+    _clearTimerState();
+    updateTimerDisplay();
+    updateRing();
+    updateIcons();
+    updateModeTabDots();
+    updateNavSessionBadge();
+
+    showSessionEndPopup(completedMode);
 }
 
-function advanceMode(autoStartBreak, forceMode = null) {
-    const nextMode = forceMode || (timer.mode === 'work' ? 'short' : 'work');
-    switchMode(nextMode);
-    if (autoStartBreak && nextMode !== 'work') startTimer();
-}
-
-function updateFocusPanelColor() {
-    const panel = document.getElementById('focus-panel');
-    panel.className = 'panel focus-panel';
-    if (timer.mode !== 'work') panel.classList.add(`mode-${timer.mode}`);
-    document.getElementById('ring-label').textContent = MODES[timer.mode].label;
-}
-
+// =============================================
+// Timer — Display Helpers
+// =============================================
 function updateTimerDisplay() {
-    const m = Math.floor(timer.remaining / 60).toString().padStart(2, '0');
-    const s = (timer.remaining % 60).toString().padStart(2, '0');
-    document.getElementById('timer-display').textContent = `${m}:${s}`;
+    const el = document.getElementById('timer-display');
+    if (!el || el.classList.contains('count-up')) return;
+    if (timerRemainSecs >= 3600) {
+        const h = Math.floor(timerRemainSecs / 3600);
+        const m = Math.floor((timerRemainSecs % 3600) / 60).toString().padStart(2, '0');
+        const s = (timerRemainSecs % 60).toString().padStart(2, '0');
+        el.textContent = `${h}:${m}:${s}`;
+        el.classList.add('ring-time-long');
+    } else {
+        const m = Math.floor(timerRemainSecs / 60).toString().padStart(2, '0');
+        const s = (timerRemainSecs % 60).toString().padStart(2, '0');
+        el.textContent = `${m}:${s}`;
+        el.classList.remove('ring-time-long');
+    }
 }
 
 function updateRing() {
-    const offset = RING_C * (1 - timer.remaining / timer.total);
-    document.getElementById('ring-fill').style.strokeDashoffset = offset;
+    const fill = document.getElementById('ring-fill');
+    if (!fill) return;
+    const pct = timerTotalSecs > 0 ? timerRemainSecs / timerTotalSecs : 1;
+    fill.style.strokeDashoffset = RING_C * (1 - pct);
 }
 
-function renderSessionDots() {
-    const container = document.getElementById('session-dots');
-    container.innerHTML = '';
-    for (let i = 0; i < 4; i++) {
-        const dot = document.createElement('span');
-        dot.className = 's-dot' + (i < timer.cycleCount ? ' filled' : '');
-        container.appendChild(dot);
-    }
+function updateFocusPanelTheme() {
+    const panel = document.getElementById('focus-panel');
+    if (!panel) return;
+    panel.classList.remove('mode-short', 'mode-long', 'mode-break');
+    if (timerMode === 'break') panel.classList.add('mode-break');
 }
 
 function updateStatsDisplay() {
-    document.getElementById('stat-sessions').textContent = timer.sessionsToday;
-    document.getElementById('stat-minutes').textContent  = timer.minutesToday;
-    document.getElementById('stat-streak').textContent   = user.id ? (user.streak || 0) : '—';
+    const sesEl = document.getElementById('stat-sessions');
+    const minEl = document.getElementById('stat-minutes');
+    const strEl = document.getElementById('stat-streak');
+    if (sesEl) sesEl.textContent = sessionsToday;
+    if (minEl) minEl.textContent = minutesToday;
+    if (strEl) strEl.textContent = user.id ? (user.streak || 0) : '—';
 }
 
+// Returns "Xm Ys", "Xm", or "Ys" from a raw seconds value
+function fmtDuration(secs) {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    if (m > 0 && s > 0) return `${m}m ${s}s`;
+    if (m > 0) return `${m}m`;
+    return `${s}s`;
+}
+
+// =============================================
+// Session End Popup
+// =============================================
+function showSessionEndPopup(completedMode) {
+    const stepA = document.getElementById('sep-step-a');
+    const stepB = document.getElementById('sep-step-b');
+    if (!stepA || !stepB) return;
+    stepA.style.display = '';
+    stepB.style.display = 'none';
+
+    const emoji   = document.getElementById('sep-emoji');
+    const title   = document.getElementById('sep-title');
+    const sub     = document.getElementById('sep-sub');
+    const choices = document.getElementById('sep-choices');
+
+    if (completedMode === 'focus') {
+        if (emoji)   emoji.textContent = '🎯';
+        if (title)   title.textContent = 'Focus session complete';
+        if (sub)     sub.textContent   = "What's next?";
+        if (choices) choices.innerHTML = `
+            <button class="sep-choice-primary"   onclick="handlePopupChoice('focus')">Start another focus session</button>
+            <button class="sep-choice-secondary" onclick="handlePopupChoice('break')">Take a break</button>`;
+    } else {
+        if (emoji)   emoji.textContent = '☕';
+        if (title)   title.textContent = "Break's over";
+        if (sub)     sub.textContent   = 'Ready to get back to it?';
+        if (choices) choices.innerHTML = `
+            <button class="sep-choice-primary"   onclick="handlePopupChoice('focus')">Back to focus</button>
+            <button class="sep-choice-secondary" onclick="handlePopupChoice('break')">Keep resting</button>`;
+    }
+
+    popupDeadline = Date.now() + 300000;
+    updatePopupCountdown();
+    popupInterval = setInterval(updatePopupCountdown, 1000);
+
+    document.getElementById('modal-overlay').classList.add('open');
+    document.getElementById('session-end-modal').classList.add('open');
+}
+
+function updatePopupCountdown() {
+    const el = document.getElementById('sep-countdown');
+    if (!el || !popupDeadline) return;
+    const secsLeft = Math.max(0, Math.ceil((popupDeadline - Date.now()) / 1000));
+    const m = Math.floor(secsLeft / 60);
+    const s = secsLeft % 60;
+    el.textContent = secsLeft > 0
+        ? `Auto-tracking as wasted time in ${m}:${String(s).padStart(2, '0')}…`
+        : '';
+    if (secsLeft <= 0) {
+        clearInterval(popupInterval);
+        popupInterval = null;
+        _closePopupInternal();
+        enterWastedState();
+    }
+}
+
+function handlePopupChoice(mode) {
+    nextSessionMode = mode;
+    sepNextSecs = settings[mode] * 60;
+
+    const stepA = document.getElementById('sep-step-a');
+    const stepB = document.getElementById('sep-step-b');
+    if (stepA) stepA.style.display = 'none';
+    if (stepB) stepB.style.display = '';
+
+    const titleB = document.getElementById('sep-title-b');
+    if (titleB) titleB.textContent = mode === 'focus' ? 'How long will you focus?' : 'How long will you rest?';
+
+    _renderSepStepB(mode);
+}
+
+function _renderSepStepB(mode) {
+    const display = document.getElementById('sep-dur-display');
+    if (display) display.textContent = fmtDuration(sepNextSecs);
+
+    const picks    = document.getElementById('sep-quick-picks');
+    const pickVals = mode === 'focus' ? [15 * 60, 25 * 60, 45 * 60, 60 * 60] : [5 * 60, 10 * 60, 15 * 60];
+    if (picks) picks.innerHTML = pickVals.map(secs => {
+        const label = secs >= 3600 ? `${secs / 3600}h` : `${secs / 60}m`;
+        const isActive = sepNextSecs === secs;
+        return `<button class="sep-qpick${isActive ? ' active' : ''}" onclick="setSepDuration(${secs})">${label}</button>`;
+    }).join('') + `<button class="sep-qpick" onclick="openWheelPicker(sepNextSecs, setSepDuration)">Custom</button>`;
+}
+
+function setSepDuration(secs) {
+    sepNextSecs = secs;
+    _renderSepStepB(nextSessionMode || 'focus');
+}
+
+function startNextSession() {
+    const secs = Math.max(1, Math.min(3 * 3600, sepNextSecs || 25 * 60));
+    const mode  = nextSessionMode || 'focus';
+    settings[mode] = Math.max(1, Math.round(secs / 60));
+    localStorage.setItem('intime_settings', JSON.stringify(settings));
+
+    _closePopupInternal();
+
+    timerMode        = mode;
+    timerTotalSecs   = secs;
+    timerRemainSecs  = secs;
+    timerElapsedSecs = 0;
+    timerStartedAt   = null;
+    appState         = 'idle';
+
+    _setActiveModeTab(mode);
+    const label = document.getElementById('ring-label');
+    if (label) label.textContent = mode === 'focus' ? 'FOCUS' : 'BREAK';
+
+    updateFocusPanelTheme();
+    updateTimerDisplay();
+    updateRing();
+    updateQuickPicks();
+    startTimer();
+}
+
+function cancelSessionPopup() {
+    _closePopupInternal();
+    appState = 'idle';
+    _clearTimerState();
+    updateIcons();
+    updateModeTabDots();
+    updateNavSessionBadge();
+}
+
+function _closePopupInternal() {
+    clearInterval(popupInterval);
+    popupInterval = null;
+    popupDeadline = null;
+    const overlay = document.getElementById('modal-overlay');
+    const modal   = document.getElementById('session-end-modal');
+    if (overlay) overlay.classList.remove('open');
+    if (modal)   modal.classList.remove('open');
+}
+
+// =============================================
+// Wasted Time State
+// =============================================
+function enterWastedState() {
+    appState = 'wasted';
+    wastedStartedAt = Date.now() - 300000;
+    _saveTimerState();
+
+    const panel = document.getElementById('focus-panel');
+    if (panel) { panel.classList.add('wasted'); panel.classList.remove('timer-running'); }
+
+    const label = document.getElementById('ring-label');
+    if (label) label.textContent = 'WASTED TIME';
+
+    const display = document.getElementById('timer-display');
+    if (display) display.classList.add('count-up');
+
+    wastedInterval = setInterval(wastedTick, 1000);
+    _setActiveModeTab('wasted');
+    updateIcons();
+    updateModeTabDots();
+    updateNavSessionBadge();
+    updateWastedTabLabel();
+    updateQuickPicks();
+}
+
+function wastedTick() {
+    if (!wastedStartedAt) return;
+    const elapsed = Math.floor((Date.now() - wastedStartedAt) / 1000);
+    const m = Math.floor(elapsed / 60).toString().padStart(2, '0');
+    const s = (elapsed % 60).toString().padStart(2, '0');
+    const el = document.getElementById('timer-display');
+    if (el) el.textContent = `${m}:${s}`;
+    updateNavSessionBadge();
+}
+
+function saveWasted() {
+    if (!wastedStartedAt) return;
+    const elapsed = Math.floor((Date.now() - wastedStartedAt) / 1000);
+
+    clearInterval(wastedInterval);
+    wastedInterval  = null;
+    wastedStartedAt = null;
+
+    addToTracking('wasted', elapsed);
+    showToast(`Logged ${fmtDuration(elapsed)} of wasted time`, '⏳');
+
+    appState         = 'idle';
+    timerMode        = 'focus';
+    timerTotalSecs   = settings.focus * 60;
+    timerRemainSecs  = timerTotalSecs;
+    timerElapsedSecs = 0;
+    timerStartedAt   = null;
+    _clearTimerState();
+
+    const panel   = document.getElementById('focus-panel');
+    const display = document.getElementById('timer-display');
+    const label   = document.getElementById('ring-label');
+    if (panel)   panel.classList.remove('wasted');
+    if (display) display.classList.remove('count-up');
+    if (label)   label.textContent = 'FOCUS';
+
+    _setActiveModeTab('focus');
+    updateFocusPanelTheme();
+    updateTimerDisplay();
+    updateRing();
+    updateIcons();
+    updateModeTabDots();
+    updateNavSessionBadge();
+    updateWastedTabLabel();
+    updateQuickPicks();
+}
+
+// =============================================
+// Today's Time Tracking
+// =============================================
+function getTodayKey() {
+    return 'intime_tracking_' + new Date().toDateString();
+}
+
+function loadTodayTracking() {
+    try {
+        const d = JSON.parse(localStorage.getItem(getTodayKey()) || 'null');
+        if (d && typeof d === 'object') return { focus: d.focus || 0, break: d.break || 0, wasted: d.wasted || 0 };
+    } catch {}
+    return { focus: 0, break: 0, wasted: 0 };
+}
+
+function saveTodayTracking() {
+    localStorage.setItem(getTodayKey(), JSON.stringify(todayTracking));
+}
+
+function addToTracking(category, secs) {
+    if (typeof todayTracking[category] !== 'number') todayTracking[category] = 0;
+    todayTracking[category] += secs;
+    saveTodayTracking();
+    renderTodayTracking();
+    updateWastedTabLabel();
+}
+
+function renderTodayTracking() {
+    const rowsEl  = document.getElementById('today-track-rows');
+    const totalEl = document.getElementById('today-track-total');
+    if (!rowsEl || !totalEl) return;
+
+    const { focus: f, break: b, wasted: w } = todayTracking;
+    const total = f + b + w;
+
+    const fmt = (secs) => {
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        const s = secs % 60;
+        if (h > 0) return `${h}h ${m}m`;
+        if (m > 0) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+        return `${s}s`;
+    };
+
+    if (total === 0) {
+        rowsEl.innerHTML = '';
+        totalEl.textContent = 'No sessions yet today — start your first focus session above';
+        ['focus', 'break', 'wasted'].forEach(c => {
+            const el = document.getElementById(`ttb-${c}`);
+            if (el) el.style.flex = '0';
+        });
+        return;
+    }
+
+    const cats = [
+        { key: 'focus',  label: 'Study',  color: '#6C63FF', secs: f },
+        { key: 'break',  label: 'Break',  color: '#10B981', secs: b },
+        { key: 'wasted', label: 'Wasted', color: '#EF4444', secs: w },
+    ];
+
+    rowsEl.innerHTML = cats
+        .filter(c => c.secs > 0)
+        .map(c => `
+            <div class="ttr-row">
+                <span class="ttr-dot" style="background:${c.color}"></span>
+                <span class="ttr-label">${c.label}</span>
+                <span class="ttr-val">${fmt(c.secs)}</span>
+            </div>`).join('');
+
+    cats.forEach(c => {
+        const el = document.getElementById(`ttb-${c.key}`);
+        if (el) el.style.flex = String(c.secs / total);
+    });
+
+    totalEl.textContent = `Total: ${fmt(total)} today`;
+}
+
+// =============================================
+// Daily/Session Persistence
+// =============================================
 function loadTodaySessions() {
     try {
         const s = JSON.parse(localStorage.getItem('dopamine_day') || '{}');
@@ -515,19 +1832,32 @@ function saveTodaySessions(count) {
 // Settings
 // =============================================
 function loadSettingsUI() {
-    document.getElementById('s-work').value  = settings.work;
-    document.getElementById('s-short').value = settings.short;
-    document.getElementById('s-long').value  = settings.long;
+    const sWork  = document.getElementById('s-work');
+    const sShort = document.getElementById('s-short');
+    if (sWork)  sWork.value  = settings.focus;
+    if (sShort) sShort.value = settings.break;
 }
 
 function applySettings() {
-    const work  = Math.max(1, Math.min(120, parseInt(document.getElementById('s-work').value)  || 25));
-    const short = Math.max(1, Math.min(30,  parseInt(document.getElementById('s-short').value) || 5));
-    const long  = Math.max(1, Math.min(60,  parseInt(document.getElementById('s-long').value)  || 15));
-    settings = { work, short, long };
+    if (!user.isPro) { openModal('upgrade-modal'); return; }
+    const focusMins = Math.max(1, Math.min(180, parseInt(document.getElementById('s-work')?.value)  || 25));
+    const breakMins = Math.max(1, Math.min(60,  parseInt(document.getElementById('s-short')?.value) || 5));
+    settings = { focus: focusMins, break: breakMins };
     localStorage.setItem('intime_settings', JSON.stringify(settings));
-    MODES = buildModes(settings);
-    if (!timer.running) switchMode(timer.mode); // reset to new duration
+    if (appState === 'idle') {
+        timerTotalSecs  = settings[timerMode] * 60;
+        timerRemainSecs = timerTotalSecs;
+        updateTimerDisplay();
+        updateRing();
+        updateQuickPicks();
+    }
+    if (user.id) {
+        fetch('/save-timer-settings', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ work: focusMins, short: breakMins, long: breakMins }),
+        }).catch(e => console.error('Timer settings save failed:', e));
+    }
     closeAllModals();
 }
 
@@ -538,7 +1868,6 @@ function setEnergy(level) {
     user.energyLevel = level;
     closeAllModals();
 
-    // Inform AI about energy level once
     if (user.id) {
         sendChatInternal(
             `My energy level right now is ${level}. Adjust your coaching style accordingly — ${
@@ -549,7 +1878,6 @@ function setEnergy(level) {
         );
     }
 
-    // Start the timer if it was pending
     if (pendingTimerStart) {
         pendingTimerStart = false;
         startTimer();
@@ -586,7 +1914,7 @@ function startSound(type) {
     activeSound = type;
     const ctx = ensureCtx();
     const rate = ctx.sampleRate;
-    const buf  = ctx.createBuffer(1, rate * 3, rate); // 3s looped buffer
+    const buf  = ctx.createBuffer(1, rate * 3, rate);
     const data = buf.getChannelData(0);
 
     if (type === 'white') {
@@ -650,7 +1978,7 @@ function saveDump() {
 function renderDumps() {
     const dumps     = JSON.parse(localStorage.getItem('intime_dumps') || '[]');
     const container = document.getElementById('dump-list');
-    const today     = dumps.filter(d => d.time); // all recent ones
+    const today     = dumps.filter(d => d.time);
 
     if (!today.length) {
         container.innerHTML = '<p class="dump-empty">No thoughts saved yet.</p>';
@@ -749,7 +2077,8 @@ chatInputEl.addEventListener('input', function () {
 
 async function sendChat(customMsg = null) {
     const msg = customMsg || chatInputEl.value.trim();
-    if (!msg || !user.id) return;
+    if (!msg) return;
+    if (!user.id) { openModal('auth-modal'); return; }
 
     appendUserMessage(msg);
     chatInputEl.value = '';
@@ -763,18 +2092,27 @@ async function sendChat(customMsg = null) {
         const res  = await fetch('/chat', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body:    JSON.stringify({
                 message:  msg,
-                userId:   user.id,
                 userName: user.name,
                 history:  chatHistory,
                 context:  buildChatContext(),
             }),
         });
+
+        if (res.status === 401) { showToast('Session expired — please sign in again', '⚠️'); return; }
+        if (res.status === 403) {
+            const data = await res.json();
+            typingEl.remove();
+            if (data.error === 'pro_required') openModal('upgrade-modal');
+            return;
+        }
+
         const data = await res.json();
         typingEl.remove();
 
-        if (data.start_timer && !timer.running) timerToggle();
+        if (data.start_timer && appState === 'idle') handlePlay();
         appendAiMessage(data.ai_message, data.suggestions);
         chatHistory.push({ role: 'user', text: msg }, { role: 'model', text: data.ai_message });
         if (chatHistory.length > 40) chatHistory = chatHistory.slice(-40);
@@ -786,7 +2124,6 @@ async function sendChat(customMsg = null) {
     }
 }
 
-// Internal AI message (no user bubble shown — used for session complete, daily brief, energy)
 async function sendChatInternal(msg) {
     if (!user.id) return;
     const typingEl = showTyping();
@@ -794,9 +2131,9 @@ async function sendChatInternal(msg) {
         const res  = await fetch('/chat', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body:    JSON.stringify({
                 message:  msg,
-                userId:   user.id,
                 userName: user.name,
                 history:  chatHistory,
                 context:  buildChatContext(),
@@ -814,12 +2151,13 @@ async function sendChatInternal(msg) {
 
 function buildChatContext() {
     const activeTask = tasks.find(t => t.id === activeTaskId);
+    const isRunning  = appState === 'focus_running' || appState === 'break_running';
     return {
         tasks:         tasks.filter(t => !t.done).map(t => t.title),
         activeTask:    activeTask?.title || null,
-        timerMode:     timer.mode,
-        timerRunning:  timer.running,
-        sessionsToday: timer.sessionsToday,
+        timerMode:     timerMode,
+        timerRunning:  isRunning,
+        sessionsToday: sessionsToday,
         streak:        user.streak,
         isReturning:   user.isReturning,
         energyLevel:   user.energyLevel,
@@ -890,7 +2228,8 @@ async function fetchTaskEstimate(taskId) {
         const res  = await fetch('/estimate-task', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ task: task.title, userId: user.id }),
+            credentials: 'include',
+            body:    JSON.stringify({ task: task.title }),
         });
         const data = await res.json();
         task.estimatedMins   = data.estimated_minutes;
@@ -933,8 +2272,8 @@ async function loadCalendarMonth() {
 
     if (user.id) {
         try {
-            const tzOffset = -new Date().getTimezoneOffset(); // JS offset is inverted vs server
-            const res  = await fetch(`/calendar/${user.id}?year=${calState.year}&month=${calState.month}&tz_offset=${tzOffset}`);
+            const tzOffset = -new Date().getTimezoneOffset();
+            const res  = await fetch(`/calendar?year=${calState.year}&month=${calState.month}&tz_offset=${tzOffset}`, { credentials: 'include' });
             const data = await res.json();
             calState.data = data.days || {};
         } catch (e) { console.error('Calendar load failed:', e); calState.data = {}; }
@@ -957,7 +2296,6 @@ function renderCalendarGrid() {
 
     grid.innerHTML = '';
 
-    // Empty padding cells before first day
     for (let i = 0; i < firstDay; i++) {
         const empty = document.createElement('div');
         empty.className = 'cal-cell cal-cell-empty';
@@ -1021,16 +2359,14 @@ function renderDayPanel(dateStr) {
 }
 
 async function saveCalendarNote(dateStr) {
-    if (!user.id) {
-        alert('Sign in to save notes.');
-        return;
-    }
+    if (!user.id) { alert('Sign in to save notes.'); return; }
     const content = document.getElementById('cal-note-input')?.value || '';
     try {
         await fetch('/calendar/note', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ userId: user.id, date: dateStr, content }),
+            credentials: 'include',
+            body:    JSON.stringify({ date: dateStr, content }),
         });
         if (!calState.data[dateStr]) calState.data[dateStr] = { minutes: 0, sessions: 0, tasks: [], note: '' };
         calState.data[dateStr].note = content;
@@ -1072,6 +2408,7 @@ function openModal(id) {
 }
 
 function closeAllModals() {
+    if (document.getElementById('session-end-modal')?.classList.contains('open')) return;
     document.getElementById('modal-overlay').classList.remove('open');
     document.querySelectorAll('.modal.open').forEach(m => m.classList.remove('open'));
 }
