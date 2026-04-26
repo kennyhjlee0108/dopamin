@@ -795,6 +795,54 @@ async def get_stats(user_id: CurrentUser):
     return stats
 
 
+# ── Task persistence ─────────────────────────────────────────────────────────
+
+class TaskItem(BaseModel):
+    id:             str
+    title:          str
+    done:           bool = False
+    estimated_mins: Optional[int] = None
+    actual_mins:    int = 0
+    position:       int = 0
+
+
+@app.get("/tasks")
+async def get_tasks(user_id: CurrentUser):
+    res = (
+        supabase.table("tasks")
+        .select("id,title,done,estimated_mins,actual_mins,position")
+        .eq("user_id", user_id)
+        .order("position")
+        .execute()
+    )
+    return res.data or []
+
+
+@app.put("/tasks")
+async def put_tasks(items: list[TaskItem], user_id: CurrentUser):
+    if items:
+        rows = [
+            {
+                "id":             t.id,
+                "user_id":        user_id,
+                "title":          t.title,
+                "done":           t.done,
+                "estimated_mins": t.estimated_mins,
+                "actual_mins":    t.actual_mins,
+                "position":       t.position,
+            }
+            for t in items
+        ]
+        supabase.table("tasks").upsert(rows, on_conflict="id,user_id").execute()
+    # Remove tasks that were deleted client-side
+    kept = [t.id for t in items]
+    if kept:
+        supabase.table("tasks").delete().eq("user_id", user_id).not_("id", "in", f"({','.join(kept)})").execute()
+    else:
+        supabase.table("tasks").delete().eq("user_id", user_id).execute()
+    return {"status": "ok", "count": len(items)}
+
+
 # ── Timer state persistence ───────────────────────────────────────────────────
 
 class TimerStateIn(BaseModel):

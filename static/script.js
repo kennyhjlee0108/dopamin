@@ -59,6 +59,7 @@ let minutesToday  = 0;
 let todayTracking = loadTodayTracking();
 
 let chatHistory = [];
+let _taskSyncTimer = null;
 
 // Google Sign-In readiness flags (must be declared before restoreSession IIFE below)
 let _gsiReady   = false;
@@ -131,7 +132,7 @@ updateWastedTabLabel();
             enableChat();
             updateLockedUI();
             updateStatsDisplay();
-            tasks = loadTasks();
+            tasks = await _loadTasksFromServer();
             renderTasks();
             await _loadChatHistory();
         } catch (e) { console.error('Profile restore failed:', e); }
@@ -656,6 +657,59 @@ function loadTasks() {
 
 function saveTasks() {
     localStorage.setItem(getTasksKey(), JSON.stringify(tasks));
+    if (user.id) {
+        clearTimeout(_taskSyncTimer);
+        _taskSyncTimer = setTimeout(_pushTasksToServer, 500);
+    }
+}
+
+async function _pushTasksToServer() {
+    if (!user.id) return;
+    try {
+        await fetch('/tasks', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(tasks.map((t, i) => ({
+                id:             t.id,
+                title:          t.title,
+                done:           t.done,
+                estimated_mins: t.estimatedMins || null,
+                actual_mins:    t.actualMins    || 0,
+                position:       i,
+            }))),
+        });
+    } catch {}
+}
+
+async function _loadTasksFromServer() {
+    try {
+        const res = await fetch('/tasks', { credentials: 'include' });
+        if (!res.ok) return loadTasks();
+        const serverTasks = await res.json();
+        if (serverTasks.length > 0) {
+            // Server is authoritative — use server data
+            const mapped = serverTasks.map(t => ({
+                id:             t.id,
+                title:          t.title,
+                done:           t.done,
+                estimatedMins:  t.estimated_mins || null,
+                actualMins:     t.actual_mins    || 0,
+                createdAt:      Date.now(),
+            }));
+            localStorage.setItem(getTasksKey(), JSON.stringify(mapped));
+            return mapped;
+        }
+        // Server has no tasks — migrate from localStorage if the user has any
+        const local = loadTasks();
+        if (local.length > 0) {
+            tasks = local;
+            await _pushTasksToServer();
+        }
+        return local;
+    } catch {
+        return loadTasks();
+    }
 }
 
 function genId() {

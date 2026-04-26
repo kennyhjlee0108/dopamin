@@ -61,3 +61,22 @@ ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS timer_long  INTEGER;
 -- Index for Stripe customer lookups
 CREATE INDEX IF NOT EXISTS idx_user_profiles_stripe_customer
     ON user_profiles (stripe_customer_id);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Tasks (server-side storage for cross-device persistence)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id             TEXT        NOT NULL,
+    user_id        TEXT        NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
+    title          TEXT        NOT NULL,
+    done           BOOLEAN     NOT NULL DEFAULT FALSE,
+    estimated_mins INTEGER,
+    actual_mins    INTEGER     NOT NULL DEFAULT 0,
+    position       INTEGER     NOT NULL DEFAULT 0,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_user_position
+    ON tasks (user_id, position);
