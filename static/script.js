@@ -743,7 +743,7 @@ function taskHtml(task) {
         <button class="task-check${task.done ? ' checked' : ''}" onclick="toggleTask('${task.id}')">
             ${task.done ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
         </button>
-        <span class="task-title${task.done ? ' done' : ''}">${escHtml(task.title)}</span>
+        <span class="task-title${task.done ? ' done' : ''}"${!task.done ? ` title="double-click to edit" ondblclick="editTitle('${task.id}')"` : ''}>${escHtml(task.title)}</span>
         ${est}
         <div class="task-actions">
             ${showBreak ? `<button class="task-break-btn" onclick="breakdownTask('${task.id}')" title="Break it down with AI">
@@ -795,6 +795,50 @@ function editEstimate(id) {
             task.estimatedMins  = val;
             task.estimateSource = 'edited by you';
             saveTasks();
+        }
+        renderTasks();
+    };
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter')  { e.preventDefault(); input.blur(); }
+        if (e.key === 'Escape') { saved = true; renderTasks(); }
+    });
+    input.addEventListener('blur', save);
+
+    span.replaceWith(input);
+    input.focus();
+    input.select();
+}
+
+// =============================================
+// Editable Title
+// =============================================
+function editTitle(id) {
+    const li = document.querySelector(`.task-item[data-id="${id}"]`);
+    if (!li) return;
+    const span = li.querySelector('.task-title');
+    if (!span) return;
+    const task = tasks.find(t => t.id === id);
+    if (!task || task.done) return;
+
+    const original = task.title;
+    const input    = document.createElement('input');
+    input.type      = 'text';
+    input.value     = original;
+    input.maxLength = 200;
+    input.className = 'task-title-edit';
+
+    let saved = false;
+    const save = () => {
+        if (saved) return;
+        saved = true;
+        const trimmed = input.value.trim().slice(0, 200);
+        if (trimmed && trimmed !== original) {
+            task.title = trimmed;
+            saveTasks();
+            if (task.id === activeTaskId) {
+                const label = document.getElementById('active-task-label');
+                if (label) label.textContent = trimmed;
+            }
         }
         renderTasks();
     };
