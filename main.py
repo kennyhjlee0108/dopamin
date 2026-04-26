@@ -797,6 +797,8 @@ async def get_stats(user_id: CurrentUser):
 
 # ── Task persistence ─────────────────────────────────────────────────────────
 
+_SAFE_ID = re.compile(r'^[a-zA-Z0-9_-]+$')
+
 class TaskItem(BaseModel):
     id:             str
     title:          str
@@ -820,6 +822,10 @@ async def get_tasks(user_id: CurrentUser):
 
 @app.put("/tasks")
 async def put_tasks(items: list[TaskItem], user_id: CurrentUser):
+    for t in items:
+        if not _SAFE_ID.match(t.id):
+            raise HTTPException(status_code=400, detail=f"Invalid task ID: {t.id!r}")
+
     if items:
         rows = [
             {
@@ -834,12 +840,16 @@ async def put_tasks(items: list[TaskItem], user_id: CurrentUser):
             for t in items
         ]
         supabase.table("tasks").upsert(rows, on_conflict="id,user_id").execute()
-    # Remove tasks that were deleted client-side
-    kept = [t.id for t in items]
-    if kept:
-        supabase.table("tasks").delete().eq("user_id", user_id).not_("id", "in", f"({','.join(kept)})").execute()
-    else:
-        supabase.table("tasks").delete().eq("user_id", user_id).execute()
+
+    # Delete tasks that were removed client-side
+    kept = {t.id for t in items}
+    existing = (
+        supabase.table("tasks").select("id").eq("user_id", user_id).execute()
+    )
+    to_delete = [row["id"] for row in (existing.data or []) if row["id"] not in kept]
+    if to_delete:
+        supabase.table("tasks").delete().eq("user_id", user_id).in_("id", to_delete).execute()
+
     return {"status": "ok", "count": len(items)}
 
 
