@@ -469,7 +469,9 @@ CURRENT STATE:
 ADHD SCIENCE (weave in naturally when helpful, never lecture):
 {KNOWLEDGE}
 """
-        contents = [{"role": h["role"], "parts": [{"text": h["text"]}]} for h in request.history]
+        # Sanitize history — skip items missing required keys to avoid KeyError
+        safe_history = [h for h in request.history if h.get("role") and h.get("text")]
+        contents = [{"role": h["role"], "parts": [{"text": h["text"]}]} for h in safe_history]
         contents.append({"role": "user", "parts": [{"text": request.message}]})
 
         response = ai_client.models.generate_content(
@@ -477,7 +479,12 @@ ADHD SCIENCE (weave in naturally when helpful, never lecture):
             contents=contents,
             config={"system_instruction": instruction},
         )
-        raw   = response.text
+        try:
+            raw = response.text
+        except Exception as safety_err:
+            logger.warning("Gemini response blocked for user %s: %s", user_id, safety_err)
+            return {"ai_message": "I wasn't able to respond to that — try rephrasing.",
+                    "suggestions": ["Start a session", "Add a task", "Help me focus"], "start_timer": False}
         clean = re.sub(r"```[\s\S]*?```|\[START_TIMER\]|\[PAUSE_TIMER\]", "", raw).strip()
 
         suggestions = None
@@ -504,8 +511,8 @@ ADHD SCIENCE (weave in naturally when helpful, never lecture):
             logger.warning("chat_messages insert failed: %s", db_err)
 
         return {"ai_message": clean, "suggestions": suggestions, "start_timer": "[START_TIMER]" in raw}
-    except Exception as e:
-        logger.error("Chat error for user %s: %s", user_id, e)
+    except Exception:
+        logger.exception("Chat error for user %s", user_id)
         return {"ai_message": "Something went wrong — please try again.",
                 "suggestions": ["Try again", "Start timer", "I need help"], "start_timer": False}
 
