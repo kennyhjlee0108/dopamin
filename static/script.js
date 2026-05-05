@@ -181,13 +181,20 @@ updateWastedTabLabel();
         polls++;
         try {
             const res  = await fetch('/api/user/subscription', { credentials: 'include' });
+            if (res.status === 401) {
+                // Session lost (e.g. redeployment) — clear stale user state and prompt sign-in
+                user.id = null; user.isPro = false;
+                _initGoogleSignIn();
+                showToast('Payment received — please sign in to activate Pro ✨', '✨', 6000);
+                return;
+            }
             const data = await res.json();
             if (data.is_pro) {
                 user.isPro = true;
                 enableChat();
                 updateLockedUI();
                 updateStatsDisplay();
-                showToast('Pro activated! Sign in to access all features ✨', '✨', 6000);
+                showToast('Pro activated! ✨', '✨', 6000);
                 return;
             }
         } catch (e) { console.error('Post-checkout Pro check failed:', e); }
@@ -2204,7 +2211,7 @@ async function sendChat(customMsg = null) {
             }),
         });
 
-        if (res.status === 401) { showToast('Session expired — please sign in again', '⚠️'); return; }
+        if (res.status === 401) { typingEl.remove(); showToast('Session expired — please sign in again', '⚠️'); return; }
         if (res.status === 403) {
             const data = await res.json();
             typingEl.remove();
@@ -2242,8 +2249,9 @@ async function sendChatInternal(msg) {
                 context:  buildChatContext(),
             }),
         });
-        const data = await res.json();
         typingEl.remove();
+        if (!res.ok) return;
+        const data = await res.json();
         appendAiMessage(data.ai_message, data.suggestions);
         chatHistory.push({ role: 'user', text: msg }, { role: 'model', text: data.ai_message });
         if (chatHistory.length > 40) chatHistory = chatHistory.slice(-40);
