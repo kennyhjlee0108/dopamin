@@ -80,3 +80,33 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 CREATE INDEX IF NOT EXISTS idx_tasks_user_position
     ON tasks (user_id, position);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Timer state persistence (server-side, one row per user)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS timer_state (
+    user_id       TEXT PRIMARY KEY REFERENCES user_profiles(id) ON DELETE CASCADE,
+    mode          TEXT NOT NULL DEFAULT 'focus',
+    status        TEXT NOT NULL DEFAULT 'idle',
+    duration_secs INTEGER NOT NULL DEFAULT 0,
+    started_at    BIGINT,
+    elapsed_secs  INTEGER NOT NULL DEFAULT 0,
+    wasted_at     BIGINT,
+    updated_at    BIGINT NOT NULL DEFAULT 0
+);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Chat message history (Pro feature)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id         BIGSERIAL PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
+    role       TEXT NOT NULL,
+    content    TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_user_date
+    ON chat_messages (user_id, created_at);

@@ -62,8 +62,9 @@ let chatHistory = [];
 let _taskSyncTimer = null;
 
 // Google Sign-In readiness flags (must be declared before restoreSession IIFE below)
-let _gsiReady   = false;
-let _gsiPending = false;
+let _gsiReady       = false;
+let _gsiPending     = false;
+let _gsiInitialized = false;
 
 // =============================================
 // Init
@@ -183,6 +184,7 @@ updateWastedTabLabel();
             const data = await res.json();
             if (data.is_pro) {
                 user.isPro = true;
+                enableChat();
                 updateLockedUI();
                 updateStatsDisplay();
                 showToast('Pro activated! Sign in to access all features ✨', '✨', 6000);
@@ -441,11 +443,14 @@ function _initGoogleSignIn() {
 }
 
 function _renderGoogleButton() {
-    google.accounts.id.initialize({
-        client_id: '121246915230-hrfas5irqhnb8sgg8qoc37ba51dqkg0g.apps.googleusercontent.com',
-        callback: handleCredentialResponse,
-        auto_select: false,
-    });
+    if (!_gsiInitialized) {
+        _gsiInitialized = true;
+        google.accounts.id.initialize({
+            client_id: '121246915230-hrfas5irqhnb8sgg8qoc37ba51dqkg0g.apps.googleusercontent.com',
+            callback: handleCredentialResponse,
+            auto_select: false,
+        });
+    }
     const el = document.getElementById('google-signin-btn');
     if (el) {
         el.style.display = '';
