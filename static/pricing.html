@@ -455,14 +455,24 @@ async function startCheckout() {
     btn.textContent = 'Loading…';
 
     try {
-        const res = await fetch('/create-checkout-session', {
+        const res = await fetch('/api/stripe/create-checkout-session', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId }),
+            credentials: 'include',
+            body: JSON.stringify({ email: '' }),
         });
+        if (res.status === 401) {
+            showToast('Please sign in first — open the app and sign in with Google.');
+            setTimeout(() => { window.location.href = '/app'; }, 2000);
+            btn.disabled = false;
+            btn.textContent = 'Get Pro — $9/mo ✦';
+            return;
+        }
         const data = await res.json();
 
         if (data.checkout_url) {
+            sessionStorage.setItem('intime_post_checkout_uid',  userId);
+            sessionStorage.setItem('intime_post_checkout_name', localStorage.getItem('intime_last_user_name') || '');
             window.location.href = data.checkout_url;
         } else if (data.error) {
             showToast('Stripe not configured yet. Add your Stripe keys to .env to enable payments.');
